@@ -17,7 +17,7 @@ const ORD0=()=>[['Buy',+(.05*K()).toFixed(4),60000,'12:04 UTC today','BTC'],['Se
 const POS0=()=>[{m:'BTC',side:'Buy',z:+(.05*K()).toFixed(4),e:60000,sl:58000,tp:null}];
 const POOL0=()=>({inp:525.6,res:0,snd:0,paid:[['7f2a',3.2,'4dK9…x2Qa','2h ago'],['c91e',4.2,'Qm7T…8vLr','1d ago']]});
 const S={v:'start',p:{},stage:'challenge',bal:10640,rl:0,days:2,tab:'Position',tf:1,pay:'idle',chk:0,q:60,qr:0,amt:0,net:0,t:{},appeal:0,m:'BTC',mq:'',mc:'All',pdis:0,
- pos:[{m:'BTC',side:'Buy',z:.05,e:60000,sl:58000,tp:null}],ord:ORD0(),pool:POOL0(),sales:[],bp:'All',preview:false,aiReady:false,apiDecision:null,apiPayout:null,own:{need:['breach','wallet'],done:14,min:9}};
+ pos:[{m:'BTC',side:'Buy',z:.05,e:60000,sl:58000,tp:null}],ord:ORD0(),pool:POOL0(),sales:[],bp:'All',preview:false,aiReady:false,nearIntentsConfigured:false,challengePayment:null,apiDecision:null,apiPayout:null,own:{need:['breach','wallet'],done:14,min:9}};
 const NET=()=>S.settlementNetwork||'Treasury rail',USDCN=()=>S.rail=='testnet'?'test USDC':'USDC';
 let T={m:'BTC',side:'Buy',z:.02,sl:58500,tp:null},M={i:0,tab:'Stop loss',sl:0,fr:.5},timers=[];
 const PRE={

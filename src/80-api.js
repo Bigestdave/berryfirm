@@ -3,7 +3,7 @@
    entry point for state-changing actions when BERRY.api is enabled. */
 const BerryAPI=(()=>{
  let online=false,loading=false;
- const fail=e=>{console.warn('Berry API',e);const message=String(e?.message||'');const copy=/ai api key|berry ai.*key/i.test(message)?'Add the AI key and restart.':/treasury.*insufficient|insufficient.*usdc/i.test(message)?'Treasury needs funding.':/paused/i.test(message)?'Payouts are paused.':/already have an active|account already active/i.test(message)?'Account already active. Resume it.':/failed to fetch|network|fetch|connection|reach/i.test(message)?'Server unavailable. Refresh.':'Couldn’t complete that. Try again.';toast(copy,'err')};
+ const fail=e=>{console.warn('Berry API',e);const message=String(e?.message||'');const copy=/ai api key|berry ai.*key/i.test(message)?'Add the AI key and restart.':/treasury.*insufficient|insufficient.*usdc/i.test(message)?'Treasury needs funding.':/near intents|payment service/i.test(message)?'Payment service unavailable.':/mainnet account/i.test(message)?'Use a NEAR mainnet account.':/paused/i.test(message)?'Payouts are paused.':/already have an active|account already active/i.test(message)?'Account already active. Resume it.':/failed to fetch|network|fetch|connection|reach/i.test(message)?'Server unavailable. Refresh.':'Couldn’t complete that. Try again.';toast(copy,'err')};
  const call=async(path,o={})=>{
   const r=await fetch(path,{credentials:'same-origin',headers:{'content-type':'application/json',...(o.headers||{})},...o});
   const x=await r.json().catch(()=>({}));if(!r.ok)throw new Error(x.error||'Request failed');return x
@@ -12,7 +12,7 @@ const BerryAPI=(()=>{
  const payState=s=>({requested:'review',approved:'approved',sending:'sending',paid:'paid',rejected:'rejected',escalated:'escalated'})[s]||'idle';
  const setBusiness=(key,b)=>{S.business=S.business||{};S.business[key]={per:key,sold:b.sold,bySize:b.bySize||{},statuses:b.statuses||{},sales:b.sales,pay:b.payouts.amount,np:b.payouts.count,ai:b.ai,host:b.hosting,cost:b.costs,net:b.net,keep:b.sales?b.net/b.sales:0};S.trends=S.trends||{};S.trends[key]=b.series};
  const applyMe=me=>{
-  S.preview=false;S.aiReady=!!me.aiReady;BERRY.user.name=me.user.wallet;BERRY.user.role=me.user.role;BERRY.share=me.settings.revenueShare;BERRY.cap=me.settings.accountPayoutCap;BERRY.fees=me.settings.challengeFees;BERRY.treasury=me.treasury||'';S.rail=me.rail||'mock';S.settlementNetwork=me.settlementNetwork||'Treasury rail';
+  S.preview=false;S.aiReady=!!me.aiReady;S.nearIntentsConfigured=!!me.nearIntentsConfigured;S.challengePayment=me.pendingChallengePayment||null;BERRY.user.name=me.user.wallet;BERRY.user.role=me.user.role;BERRY.share=me.settings.revenueShare;BERRY.cap=me.settings.accountPayoutCap;BERRY.fees=me.settings.challengeFees;BERRY.treasury=me.treasury||'';S.rail=me.rail||'mock';S.settlementNetwork=me.settlementNetwork||'Treasury rail';
   S.cfg={halt:me.settings.paused?1:0,lim:{pay:me.settings.payoutCap,ai:me.settings.aiCap},sz:Object.fromEntries(Object.entries(me.settings.sizes).map(([k,v])=>[k,v?1:0])),mk:Object.fromEntries(Object.entries(me.settings.markets).map(([k,v])=>[k,v?1:0]))};
   Object.entries(me.prices||{}).forEach(([k,v])=>{if(MK[k])MK[k].p=Number(v)});
   S.pool=me.pool||{inp:0,res:0,snd:0,paid:[]};
@@ -50,6 +50,8 @@ const BerryAPI=(()=>{
   },
   refresh,
   createChallenge:size=>perform(async()=>{const result=await call('/api/challenges',{method:'POST',body:JSON.stringify({size})});await refresh({render:false});go('home');toast(result.reused?'Account resumed':'Free test account started')}),
+  payChallenge:(size,refundTo)=>perform(async()=>{const result=await call('/api/challenges/payment-quote',{method:'POST',body:JSON.stringify({size,refundTo})});S.challengePayment=result.payment;paymentSheet(result.payment)}),
+  checkChallengePayment:id=>perform(async()=>{const result=await call('/api/challenges/payments/'+encodeURIComponent(id));S.challengePayment={...S.challengePayment,...result.payment};if(result.payment.status==='paid'){await refresh({render:false});shut();go('home');toast('Payment confirmed · account started')}else{paymentSheet(S.challengePayment);toast(result.payment.providerStatus==='FAILED'||result.payment.providerStatus==='REFUNDED'?'Payment did not complete.':'Payment not confirmed yet.','info')}}),
   order:input=>perform(async()=>{await call('/api/orders',{method:'POST',body:JSON.stringify(input)});await refresh({render:false});go('trade');toast('Order filled at the server price')}),
   updatePosition:(id,stopLoss)=>perform(async()=>{await call('/api/positions/'+encodeURIComponent(id),{method:'PATCH',body:JSON.stringify({stopLoss})});await refresh({render:false});shut();draw();toast('Stop loss updated')}),
   closePosition:(id,fraction)=>perform(async()=>{const r=await call('/api/positions/'+encodeURIComponent(id)+'/close',{method:'POST',body:JSON.stringify({fraction})});await refresh({render:false});shut();draw();toast((fraction>=.999?'Closed':'Partly closed')+' position · '+sg(r.pnl))}),
@@ -60,7 +62,8 @@ const BerryAPI=(()=>{
   appeal:message=>perform(async()=>{await call('/api/appeals',{method:'POST',body:JSON.stringify({message})});S.appeal=1;draw();toast('Appeal sent to the owner queue')}),
   updateRules:patch=>perform(async()=>{await call('/api/ops/rules',{method:'PATCH',body:JSON.stringify(patch)});await refresh();}),
   resolveCase:(id,action,reason)=>perform(async()=>{await call('/api/ops/cases/'+encodeURIComponent(id)+'/resolve',{method:'POST',body:JSON.stringify({action,reason})});await refresh({render:false});go('queue');toast('Case updated')}),
-  seed:()=>perform(async()=>{await call('/api/demo/seed',{method:'POST'});await refresh({render:false});go('home');toast('Free demo account ready')})
+  seed:()=>perform(async()=>{await call('/api/demo/seed',{method:'POST'});const r=await call('/api/payouts',{method:'POST',body:'{}'});await refresh({render:false});S.apiDecision=r.decision;go('payout');toast(r.payout.status==='approved'?'Berry AI approved payout':'Payout needs review',r.payout.status==='approved'?'ok':'warn')}),
+  resetDemo:()=>perform(async()=>{await call('/api/demo/reset',{method:'POST'});await refresh({render:false});go('start');toast('Demo reset · ledger evidence kept')})
  };
  window.BerryAPI=api;return api;
 })();

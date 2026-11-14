@@ -35,7 +35,7 @@ The evaluation market is a controlled environment, not an exchange or brokerage.
 
 Berry Firm is positioned as a one-step evaluation: a 10% target, 5% daily loss limit, 10% maximum loss, three qualifying trading days, and a 90% trader profit share. The initial commercial schedule is $59 for $5K, $89 for $10K, $199 for $25K, and $349 for $50K evaluation accounts; the policy starts with a $1,000 per-account and daily settlement ceiling, adjustable only by the operator.
 
-The schedule describes the commercial product. In the hackathon demo (`RAIL=testnet`, `AUTH_MODE=demo`), evaluation access is free and no challenge payment is collected.
+The schedule describes the commercial product. By default, the local or hackathon demo (`RAIL=mock` or `RAIL=testnet`, `AUTH_MODE=demo`) gives judges free test access and collects no challenge payment.
 
 Those are commercial product terms, not a claim that a faucet must hold matching real value. The testnet proof deliberately settles a small qualifying payout in test USDC; the rail refuses any amount that the testnet treasury does not actually hold.
 
@@ -50,15 +50,23 @@ npm start
 
 Open [http://localhost:3000](http://localhost:3000). In the demo setup, the app signs into the configured demo account automatically. Open **Profile → Operator console** for owner tools; the public ledger is at `/#ledger` and policy controls are at `/#rules`.
 
-For a fast local walkthrough, seed an eligible funded account:
+### Two-minute judge run
 
-```sh
-npm run seed:demo
-```
+1. Start with `RAIL=testnet`, `AUTH_MODE=demo`, a funded OutLayer test-USDC treasury, and a working NEAR AI key if you want a model decision in the run.
+2. Open **Profile → Reset run** to archive the previous demo account while keeping its ledger evidence.
+3. Choose **Run payout demo**. Berry Firm seeds the qualifying funded account, creates the payout case, and opens its decision.
+4. Review the model decision and independent policy result. Confirm only if approved; the OutLayer wallet then sends test USDC.
+5. Open the public **Ledger** to see token usage and inference cost, the realized trader/treasury split, treasury balance before and after, and the NEAR testnet transaction link.
 
-The seeded account is a free test account. Open **Payouts**, request a settlement, and confirm it to send the configured rail's payout. Testnet confirmations send test USDC; local mock confirmations are labelled as a demo. The full operating record appears on the ledger.
+The payout remains at the final confirmation step until a person approves it. A reset archives the previous account and keeps its ledger records; it does not refill the on-chain treasury. Top up the test-USDC treasury before repeating a settled run. A reset is blocked while a payout is still pending. If the AI key is missing, Berry records a labelled policy fallback; if the provider errors, it escalates instead of pretending a model approved.
 
-With `RAIL=testnet` and `AUTH_MODE=demo`, evaluation access is free: no challenge payment is collected or shown as revenue. Judges can use **Start free test account** for a fresh evaluation or **Run payout demo** for the prequalified settlement journey. The demo account is shared and resumes its existing state on later visits.
+With `RAIL=testnet` and `AUTH_MODE=demo`, evaluation access is free: no challenge payment is collected or shown as revenue. The judge account is shared and resumes its state until reset.
+
+## NEAR Intents challenge checkout
+
+The optional paid checkout uses NEAR Intents 1Click on **mainnet**. The [current 1Click quickstart](https://docs.agentsonintents.com/integration/distribution-channels/1click-api/quickstart/introduction) says there is no testnet, so leave it disabled for the free testnet judge run. When enabled, a trader receives a quote for the published challenge fee, sends the exact quoted NEAR amount to the 1Click deposit address, and Berry Firm starts the evaluation only after 1Click reports `SUCCESS` (tokens delivered). A pending, failed, or refunded payment does not create an account or record a sale. The payment settles to the configured mainnet receiver; if the app is also running its testnet evaluation rail, the checkout and payout proofs are on different networks and are labeled separately.
+
+Configure `NEAR_INTENTS_ENABLED=true` and a valid mainnet `NEAR_INTENTS_RECEIVER=your-mainnet-account.near` in `.env`. The checkout asks the buyer for a NEAR mainnet refund account. Keep this feature disabled until the receiver is correct and the operator is ready to accept mainnet funds. Without a partner key, 1Click currently charges an additional 25 bps on standard quotes; set `NEAR_INTENTS_API_KEY` if you have a partner key, as described in its [authentication guide](https://docs.agentsonintents.com/integration/distribution-channels/1click-api/authentication). The optional 1Click API integration is not exercised by the testnet payout demo.
 
 ## Activate the NEAR testnet treasury
 
@@ -81,11 +89,11 @@ If a faucet UI rejects the generated 64-character treasury address, first claim 
 
 Set the treasury policy in the OutLayer dashboard before demonstrating it: match the Berry daily cap, permit the USDC contract call and recipient-storage registration, and set an approval threshold only if you want to demonstrate an owner-held settlement. A policy-held request remains approved in Berry Firm and is never represented as settled until OutLayer returns a transaction hash.
 
-Once funded, run `npm run seed:demo`, then use the seeded account to produce a real NEAR **testnet** settlement. The test journey calibrates its qualifying payout to $0.80, so a $1 test-USDC treasury can complete the proof; it does not change the commercial product schedule or operator payout policy. A confirmed settlement exposes a **Verify on NEAR testnet** link directly in Berry Firm's public ledger. The seed route is available only with the explicit `AUTH_MODE=demo` testnet setup. Testnet assets have no cash value; mainnet settlement remains intentionally locked until this treasury path is fully exercised.
+Once funded, open **Profile → Run payout demo** to seed and review the case, or run `npm run seed:demo` before opening the app. The test journey qualifies a $0.89 profit and a $0.801 trader payout, so a $1 test-USDC treasury can complete one proof; it does not change the commercial product schedule or operator payout policy. A confirmed settlement exposes a **Verify on NEAR testnet** link directly in Berry Firm's public ledger. The seed route is available only with the explicit `AUTH_MODE=demo` testnet setup. Testnet assets have no cash value; mainnet settlement remains intentionally locked until this treasury path is fully exercised.
 
 ## AI decisioning and hard limits
 
-Berry Firm is preconfigured for NEAR AI Cloud's OpenAI-compatible chat endpoint and the `z-ai/glm-5.3-flash` model. Create an API key in the [NEAR AI Cloud console](https://cloud.near.ai/), set a small spend limit on the key, add `AI_API_KEY=<your-key>` to the local `.env`, and restart the server. Keep the key in `.env`; it is used by the server and never sent to the browser. GLM Flash supports tool use. Berry's cost guard uses NEAR AI's published rates of $0.15 per million input tokens and $0.50 per million output tokens; it records provider token usage and estimates cost from those rates.
+Berry Firm is preconfigured for NEAR AI Cloud's OpenAI-compatible chat endpoint and the `z-ai/glm-5.3-flash` model. Create an API key in the [NEAR AI Cloud console](https://cloud.near.ai/), set a spend limit on the key, add `AI_API_KEY=<your-key>` to `.env`, and restart the server. Keep the key in `.env`; it is used by the server and never sent to the browser. GLM Flash supports tool use. Berry records provider-reported token counts and calculates usage cost at the [current published rates](https://near.ai/models/z-ai/glm-5.3-flash): $0.08 per million input tokens, $0.012 per million cached input tokens, and $0.50 per million output tokens. If a response omits usage, Berry logs a conservative estimate and marks it as estimated. In-flight calls reserve a byte-bounded maximum prompt cost plus the output limit against the daily AI cap before they are sent. Update the configured rates if you change models or NEAR AI changes its price list.
 
 The model receives a bounded case summary and has no treasury key, payment credential, or direct rail access. It can call exactly one of three decisions. The deterministic policy gate remains the authority and independently checks the payout before settlement. The previously approved offline demo payout can be re-reviewed with Berry AI from its payout screen after the key is configured; that action does not send funds.
 
@@ -99,7 +107,7 @@ The policy gate in `server/store.mjs` remains the authority. It enforces:
 - unchanged destination wallet; and
 - treasury reserve before and immediately before settlement.
 
-If any AI setting is missing, the walkthrough uses a deterministic policy decision labelled as such in its audit record. This preserves a reproducible demo without presenting the fallback as a model call.
+If AI configuration is missing, the walkthrough uses a deterministic policy decision labelled as such in its audit record. A provider error becomes an escalation; it does not silently switch to a model-less approval or move funds.
 
 ## Treasury rails
 
@@ -129,6 +137,16 @@ USDC_CONTRACT=3e2210e1184b45b64c8a434c0a7e7b23cc04ea7eb7a6c3c32520d03d4afcb8af
 OUTLAYER_API=https://testnet-api.outlayer.ai
 ```
 
+Optional live challenge checkout:
+
+```ini
+NEAR_INTENTS_ENABLED=true
+NEAR_INTENTS_RECEIVER=your-mainnet-account.near
+NEAR_INTENTS_API_KEY=your-partner-key-if-available
+NEAR_INTENTS_ORIGIN_ASSET=nep141:wrap.near
+NEAR_INTENTS_USDC_ASSET=nep141:17208628f84f5d6ad33f0da3bbbeb27ffcb398eac501a31bd6ad2011e36133a1
+```
+
 `AUTH_MODE=demo` is deliberately scoped to the hackathon testnet journey. NEAR wallet-signature login is the next production authentication milestone.
 
 ## Verify
@@ -148,6 +166,7 @@ src/80-api.js        Browser adapter for persistent API state
 server/rules.mjs     Deterministic evaluation pricing and rules
 server/store.mjs     SQLite ledger, business state, and policy gate
 server/agent.mjs     Constrained AI decision layer
+server/intents.mjs  NEAR Intents 1Click payment quotes and status checks
 server/rail.mjs      Treasury boundary: local walkthrough + OutLayer testnet
 server/index.mjs     API and static application host
 scripts/             Demo seed plus testnet-treasury setup and USDC preparation
@@ -157,9 +176,9 @@ test/                Business-loop, policy, and rail tests
 ## Roadmap to production capital
 
 - NEAR wallet-signature authentication for traders and owners
-- NEAR Intents-powered evaluation payments
-- OutLayer testnet policy and settlement evidence in the public ledger
-- Mainnet treasury activation after testnet operational validation
+- Mainnet USDC payout rail after testnet operational validation
+- Verify NEAR AI response attestations and provider billing receipts
+- Production deployment, monitoring, and recovery for pending 1Click payments
 
 ## Licence
 

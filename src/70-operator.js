@@ -23,18 +23,21 @@ const ledger=()=>S.ledger||[
  ...LC.map(x=>['cost',x[0],x[1],-x[2],'',x[3]]),
  ...S.pool.paid.map(x=>['pay','Payout · Trader ···'+x[0],x[2],-x[1],'',ago(x[3])])
 ].sort((p,q)=>p[5]-q[5]);
-const txLink=r=>S.rail=='testnet'&&/^[1-9A-HJ-NP-Za-km-z]{32,64}$/.test(r||'')?`<a class="txlink" href="https://testnet.nearblocks.io/txns/${encodeURIComponent(r)}" target="_blank" rel="noopener noreferrer">Verify on NEAR testnet ↗</a>`:'';
+const txLink=(r,meta={})=>(meta.rail==='testnet'||(!meta.rail&&S.rail==='testnet'))&&/^[1-9A-HJ-NP-Za-km-z]{32,64}$/.test(r||'')?`<a class="txlink" href="https://testnet.nearblocks.io/txns/${encodeURIComponent(r)}" target="_blank" rel="noopener noreferrer">Verify on NEAR testnet ↗</a>`:'';
 const shortLedgerDetail=(type,detail,meta={})=>{
  const text=String(detail||'');
+ if(type==='decision'&&meta.policyResult==='passed')return`Policy passed · Trader ${Math.round((meta.economics?.traderShareRate||0)*100)}%`;
  if(type==='decision')return meta.by==='offline-policy'?'Policy fallback · eligibility and limits passed':meta.by==='policy-gate'?'Policy gate · owner review':meta.by==='agent-error'?'Berry AI · owner review':meta.by?`Berry AI · ${meta.by}`:/approved/i.test(text)?'Eligibility and limits passed':/reject/i.test(text)?'Request declined':'Needs review';
  if(type==='cost'&&meta.estimated)return'Token count unavailable · estimated cost';
- if(type==='cost'&&Number.isFinite(meta.inputTokens)&&Number.isFinite(meta.outputTokens))return`${meta.inputTokens.toLocaleString()} in · ${meta.outputTokens.toLocaleString()} out tokens`;
+ if(type==='cost'&&Number.isFinite(meta.inputTokens)&&Number.isFinite(meta.outputTokens))return`${(meta.inputTokens-(meta.cachedTokens||0)).toLocaleString()} in · ${(meta.cachedTokens||0).toLocaleString()} cached · ${meta.outputTokens.toLocaleString()} out`;
+ if(type==='sale'&&meta.rail==='near-intents-mainnet')return'Payment confirmed · NEAR Intents';
+ if(type==='pay'&&meta.balanceBefore!=null&&meta.balanceAfter!=null)return`Treasury ${mm(meta.balanceBefore)} → ${mm(meta.balanceAfter)}`;
  if(type==='demo')return 'No payment collected';
  if(text.length<=42)return text;
  return text.slice(0,39).trimEnd()+'…';
 };
 const escText=text=>String(text).replace(/[&<>"']/g,ch=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[ch]));
-const lrow=x=>{const[t,l,d,a,r,hr,meta={}]=x,detail=shortLedgerDetail(t,d,meta),reference=txLink(r),value=t==='cost'&&Math.abs(a)>0&&Math.abs(a)<.005?'$'+Math.abs(a).toFixed(6):mm(a);return`<div class="r" style="min-height:64px"><span class="nm" style="margin:0">${l}<small title="${escText(d||'')}">${[escText(detail),reference,hh(hr)].filter(Boolean).join(' · ')}</small></span><b class="v ${t=='sale'?'gn':''}">${a<0?'−':'+'}${value}<small>${{sale:'Sale',pay:'Payout',cost:'Cost',decision:'Decision',appeal:'Appeal',demo:'Test account'}[t]||t}</small></b></div>`};
+const lrow=x=>{const[t,l,d,a,r,hr,meta={}]=x,detail=shortLedgerDetail(t,d,meta),reference=txLink(r,meta),proof=meta.explorerUrl?`<a class="txlink" href="${escText(meta.explorerUrl)}" target="_blank" rel="noopener noreferrer">Verify sale ↗</a>`:'',value=t==='cost'&&Math.abs(a)>0&&Math.abs(a)<.005?'$'+Math.abs(a).toFixed(6):mm(a);return`<div class="r" style="min-height:64px"><span class="nm" style="margin:0">${l}<small title="${escText(d||'')}">${[escText(detail),reference,proof,hh(hr)].filter(Boolean).join(' · ')}</small></span><b class="v ${t=='sale'?'gn':''}">${a<0?'−':'+'}${value}<small>${{sale:'Sale',pay:'Payout',cost:'Cost',decision:'Decision',appeal:'Appeal',demo:'Test account'}[t]||t}</small></b></div>`};
 /* ---- shared pieces ---- */
 const ohd=(t,s)=>`<div class="bar">${LG(34)}<span class="chip">Operator</span></div><h1 style="margin:4px 0 ${s?'4px':'16px'}">${t}</h1>${s?`<div class="mu" style="margin-bottom:16px">${s}</div>`:''}`;
 const caseCard=k=>{const c=S.caseMap&&S.caseMap[k],x=c?{t:c.type=='payout'?'Payout review':'Account review',s:'Trader ···'+c.wallet.slice(-4),d:c.decision?.reason||'Needs an owner decision',a:c.payload?.amount?mm(c.payload.amount):'Review'}:{t:OW[k][0],s:OW[k][1],d:OW[k][2],a:OW[k][3]};return`<button class="card cs" onclick="go('case',{id:'${k}',from:'${S.v}'})">${AVI(c?avId(c.wallet):k=='breach'?1:avId('e3b2'),'s')}<span class="cb"><b>${x.t}</b><small>${x.s}</small>${TG('am',x.d,0)}</span><b>${x.a}</b></button>`};

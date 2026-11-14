@@ -45,6 +45,12 @@ export class BerryStore {
         id TEXT PRIMARY KEY, kind TEXT NOT NULL, payout_id TEXT REFERENCES payouts(id), wallet TEXT NOT NULL,
         status TEXT NOT NULL, payload_json TEXT NOT NULL, decision_json TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL
       );
+      CREATE TABLE IF NOT EXISTS challenge_payments (
+        id TEXT PRIMARY KEY, wallet TEXT NOT NULL REFERENCES users(wallet), size REAL NOT NULL, fee REAL NOT NULL,
+        refund_to TEXT NOT NULL, deposit_address TEXT NOT NULL UNIQUE, deposit_memo TEXT, status TEXT NOT NULL,
+        provider_status TEXT, quote_json TEXT NOT NULL, provider_json TEXT, challenge_id TEXT REFERENCES challenges(id),
+        created_at TEXT NOT NULL, updated_at TEXT NOT NULL
+      );
       CREATE TABLE IF NOT EXISTS ledger (
         id TEXT PRIMARY KEY, type TEXT NOT NULL, label TEXT NOT NULL, detail TEXT NOT NULL, amount REAL NOT NULL,
         ref TEXT, metadata_json TEXT, created_at TEXT NOT NULL
@@ -54,19 +60,26 @@ export class BerryStore {
   }
 
   ensureSettings() {
-    const freeTestMode = this.config.rail === 'testnet' && this.config.authMode === 'demo';
+    const nearPayments = Boolean(this.config.nearIntentsEnabled && /^[a-z0-9._-]{2,64}\.near$/i.test(this.config.nearIntentsReceiver || ''));
+    const freeDemoMode = ['mock', 'testnet'].includes(this.config.rail) && this.config.authMode === 'demo' && !nearPayments;
     const freeChallengeFees = { 5000: 0, 10000: 0, 25000: 0, 50000: 0 };
+    const commercialChallengeFees = { 5000: 59, 10000: 89, 25000: 199, 50000: 349 };
     const row = this.db.prepare('SELECT json FROM settings WHERE id = 1').get();
     if (row) {
       const current = parse(row.json);
-      if (freeTestMode && JSON.stringify(current.challengeFees) !== JSON.stringify(freeChallengeFees)) {
+      if (freeDemoMode && JSON.stringify(current.challengeFees) !== JSON.stringify(freeChallengeFees)) {
         current.challengeFees = freeChallengeFees;
         this.db.prepare('UPDATE settings SET json = ?, updated_at = ? WHERE id = 1').run(json(current), now());
-        this.db.prepare('UPDATE challenges SET fee = 0 WHERE fee != 0').run();
-        // This app does not have a live challenge payment rail. Older testnet
-        // demo rows were access records, not collected revenue.
+        // Older mock/testnet access rows were not collected revenue.
+        this.db.prepare(`UPDATE challenges SET fee=0 WHERE id IN (
+          SELECT json_extract(metadata_json,'$.challengeId') FROM ledger
+          WHERE type='sale' AND detail IN ('Testnet evaluation access','Demo sale · no payment collected')
+        )`).run();
         this.db.prepare(`UPDATE ledger SET type='demo', label='Free test account', detail='No payment collected', amount=0, ref=NULL
-          WHERE type='sale' AND detail='Testnet evaluation access'`).run();
+          WHERE type='sale' AND detail IN ('Testnet evaluation access','Demo sale · no payment collected')`).run();
+      } else if (nearPayments && Object.values(current.challengeFees || {}).every((value) => Number(value) === 0)) {
+        current.challengeFees = commercialChallengeFees;
+        this.db.prepare('UPDATE settings SET json = ?, updated_at = ? WHERE id = 1').run(json(current), now());
       }
       return;
     }
@@ -76,7 +89,7 @@ export class BerryStore {
       aiCap: this.config.dailyAiCap,
       accountPayoutCap: 1000,
       revenueShare: 0.9,
-      challengeFees: freeTestMode ? freeChallengeFees : { 5000: 59, 10000: 89, 25000: 199, 50000: 349 },
+      challengeFees: freeDemoMode ? freeChallengeFees : commercialChallengeFees,
       sizes: { 5000: true, 10000: true, 25000: true, 50000: true },
       markets: Object.fromEntries(Object.keys(pricesAt()).map((market) => [market, true])),
       treasurySeed: 10
@@ -139,18 +152,99 @@ export class BerryStore {
   openPositions(challengeId) { return this.db.prepare("SELECT * FROM positions WHERE challenge_id=? AND status='open' ORDER BY opened_at").all(challengeId); }
   allPositions(challengeId) { return this.db.prepare('SELECT * FROM positions WHERE challenge_id=? ORDER BY opened_at DESC').all(challengeId); }
 
-  createChallenge(wallet, size) {
+  createChallenge(wallet, size, { feeOverride = null, paymentId = null, paymentConfirmed = false } = {}) {
     const settings = this.settings();
     size = Number(size);
-    if (!settings.sizes[size]) throw new Error('This challenge size is unavailable');
-    if (settings.paused) throw new Error('New challenges are paused');
     if (this.activeChallenge(wallet)) throw new Error('You already have an active or funded account');
-    const fee = Number(settings.challengeFees[size] || 0);
+    const pendingPayment = this.db.prepare("SELECT id FROM challenge_payments WHERE wallet=? AND status='pending' ORDER BY created_at DESC LIMIT 1").get(wallet);
+    if (pendingPayment && pendingPayment.id !== paymentId) throw new Error('A challenge payment is already in progress');
+    const fee = feeOverride == null ? Number(settings.challengeFees[size] || 0) : Number(feeOverride);
+    const payment = paymentId ? this.challengePayment(paymentId, wallet) : null;
+    const confirmedPayment = fee > 0 && paymentConfirmed && payment?.status === 'pending' && payment.size === size && payment.fee === fee;
+    if (!settings.sizes[size] && !confirmedPayment) throw new Error('This challenge size is unavailable');
+    if (settings.paused && !confirmedPayment) throw new Error('New challenges are paused');
+    if (fee > 0 && !confirmedPayment) throw new Error('A confirmed challenge payment is required before account creation');
     const record = { id: id('ch'), wallet, size, fee, status: 'active', balance: size, rules: challengeRules(size), at: now() };
     this.db.prepare(`INSERT INTO challenges (id,wallet,size,fee,status,balance,realised_loss,trading_days,rules_json,created_at,updated_at) VALUES (?,?,?,?,?,?,0,0,?,?,?)`)
       .run(record.id, wallet, size, fee, record.status, size, json(record.rules), record.at, record.at);
-    if (fee) this.ledger({ type: 'sale', label: `$${size / 1000}K challenge`, detail: this.config.rail === 'testnet' ? 'Testnet evaluation access' : 'Evaluation access', amount: fee, ref: `sale_${record.id}`, metadata: { challengeId: record.id, rail: this.config.rail } });
     return this.challenge(record.id);
+  }
+
+  createChallengePayment(wallet, size, refundTo, quote) {
+    size = Number(size);
+    const settings = this.settings();
+    if (!settings.sizes[size] || settings.paused) throw new Error('This challenge is unavailable');
+    if (this.activeChallenge(wallet)) throw new Error('You already have an active or funded account');
+    if (this.db.prepare("SELECT 1 FROM challenge_payments WHERE wallet=? AND status='pending' LIMIT 1").get(wallet)) throw new Error('A challenge payment is already in progress');
+    const fee = Number(settings.challengeFees[size] || 0);
+    if (fee <= 0) throw new Error('This account does not require payment');
+    const paymentId = id('sale');
+    const at = now();
+    this.db.prepare(`INSERT INTO challenge_payments (id,wallet,size,fee,refund_to,deposit_address,deposit_memo,status,provider_status,quote_json,created_at,updated_at)
+      VALUES (?,?,?,?,?,?,?,'pending','PENDING_DEPOSIT',?,?,?)`)
+      .run(paymentId, wallet, size, fee, refundTo, quote.depositAddress, quote.depositMemo, json(quote), at, at);
+    return this.challengePayment(paymentId);
+  }
+
+  challengePayment(paymentId, wallet = null) {
+    const row = wallet
+      ? this.db.prepare('SELECT * FROM challenge_payments WHERE id=? AND wallet=?').get(paymentId, wallet)
+      : this.db.prepare('SELECT * FROM challenge_payments WHERE id=?').get(paymentId);
+    if (!row) return null;
+    return { ...row, fee: Number(row.fee), size: Number(row.size), quote: parse(row.quote_json), provider: parse(row.provider_json, null) };
+  }
+
+  updateChallengePayment(paymentId, wallet, provider) {
+    const record = this.challengePayment(paymentId, wallet);
+    if (!record) throw new Error('Payment not found');
+    if (record.status === 'paid') return record;
+    const providerStatus = String(provider?.status || 'UNKNOWN').toUpperCase();
+    const status = providerStatus === 'REFUNDED' ? 'refunded' : providerStatus === 'FAILED' ? 'failed' : 'pending';
+    this.db.prepare('UPDATE challenge_payments SET status=?,provider_status=?,provider_json=?,updated_at=? WHERE id=?')
+      .run(status, providerStatus, json(provider || {}), now(), paymentId);
+    return this.challengePayment(paymentId, wallet);
+  }
+
+  fulfillChallengePayment(paymentId, wallet, provider) {
+    const record = this.challengePayment(paymentId, wallet);
+    if (!record) throw new Error('Payment not found');
+    if (record.status === 'paid' && record.challenge_id) return { payment: record, challenge: this.challenge(record.challenge_id) };
+    if (String(provider?.status || '').toUpperCase() !== 'SUCCESS') throw new Error('Payment is not confirmed by NEAR Intents');
+    if (this.activeChallenge(wallet)) throw new Error('An account is already active for this wallet');
+    const at = now();
+    this.db.exec('BEGIN IMMEDIATE');
+    try {
+      const challenge = this.createChallenge(wallet, record.size, { feeOverride: record.fee, paymentId, paymentConfirmed: true });
+      const transaction = provider?.swapDetails?.destinationChainTxHashes?.[0]
+        || provider?.swapDetails?.originChainTxHashes?.[0]
+        || provider?.swapDetails?.nearTxHashes?.[0]
+        || provider?.destinationTxHash || provider?.txHash || null;
+      const paymentReference = (typeof transaction === 'string' ? transaction : transaction?.hash || transaction?.txHash)
+        || provider?.correlationId || paymentId;
+      const evidence = {
+        paymentId, challengeId: challenge.id, rail: 'near-intents-mainnet', simulated: false,
+        providerStatus: 'SUCCESS', depositAddress: record.deposit_address,
+        explorerUrl: `https://explorer.near-intents.org/?search=${encodeURIComponent(record.deposit_address)}`,
+        txHash: paymentReference === paymentId ? null : paymentReference
+      };
+      this.ledger({ type: 'sale', label: `$${record.size / 1000}K challenge`, detail: 'Confirmed through NEAR Intents · Mainnet', amount: record.fee, ref: paymentReference, metadata: evidence });
+      this.db.prepare("UPDATE challenge_payments SET status='paid',provider_status='SUCCESS',provider_json=?,challenge_id=?,updated_at=? WHERE id=? AND status='pending'")
+        .run(json(provider), challenge.id, at, paymentId);
+      const payment = this.challengePayment(paymentId, wallet);
+      if (!payment || payment.status !== 'paid') throw new Error('Payment was already claimed');
+      this.db.exec('COMMIT');
+      return { payment, challenge };
+    } catch (error) {
+      this.db.exec('ROLLBACK');
+      throw error;
+    }
+  }
+
+  payoutEconomics(payout) {
+    const challenge = this.challenge(payout.challenge_id);
+    const grossProfit = round(Math.max(0, Number(challenge.balance) - Number(challenge.size)));
+    const traderShare = round(Number(payout.amount));
+    return { grossProfit, traderShare, treasuryRetained: round(Math.max(0, grossProfit - traderShare)), traderShareRate: grossProfit ? round(traderShare / grossProfit) : 0 };
   }
 
   equity(challenge, at = Date.now()) {
@@ -250,10 +344,13 @@ export class BerryStore {
 
   buildPayoutCase(payout) {
     const challenge = this.challenge(payout.challenge_id);
+    const settings = this.settings();
+    const grossProfit = round(Math.max(0, Number(challenge.balance) - Number(challenge.size)));
     return {
       payoutId: payout.id, wallet: payout.wallet, requestedWallet: payout.requested_wallet, amount: payout.amount,
       challenge: { id: challenge.id, status: challenge.status, size: challenge.size, balance: challenge.balance, openPositions: this.openPositions(challenge.id).length },
-      caps: { paidToday: this.dailyPaid(), payoutCap: this.settings().payoutCap, aiSpendToday: this.dailyAiCost(), aiCap: this.settings().aiCap },
+      economics: this.payoutEconomics(payout),
+      caps: { paidToday: this.dailyPaid(), payoutCap: settings.payoutCap, aiSpendToday: this.dailyAiCost(), aiCap: settings.aiCap },
       requestedAt: payout.created_at
     };
   }
@@ -298,19 +395,20 @@ export class BerryStore {
     const payout = this.payout(caseRecord.payout_id);
     const valid = ['approve_payout', 'reject_payout', 'escalate'];
     if (!valid.includes(decision.name) || !String(decision.reason || '').trim()) throw new Error('Invalid agent decision');
+    const policyProblem = this.policyCheck(payout);
     let status, payoutStatus, reason = String(decision.reason).trim().slice(0, 500);
     if (decision.name === 'approve_payout') {
-      const problem = this.policyCheck(payout);
-      if (problem) { status = 'escalated'; payoutStatus = 'escalated'; reason = `Policy gate: ${problem}`; }
+      if (policyProblem) { status = 'escalated'; payoutStatus = 'escalated'; reason = `Policy gate: ${policyProblem}`; }
       else { status = 'approved'; payoutStatus = 'approved'; }
     } else if (decision.name === 'reject_payout') { status = 'rejected'; payoutStatus = 'rejected'; }
     else { status = 'escalated'; payoutStatus = 'escalated'; }
     const at = now();
-    const settled = { tool: decision.name, reason, by, at, cost: round(cost), ...(usage ? { usage } : {}) };
+    const economics = this.payoutEconomics(payout);
+    const settled = { tool: decision.name, reason, by, at, cost: round(cost), policyResult: policyProblem ? 'blocked' : 'passed', policyReason: policyProblem, economics, ...(usage ? { usage } : {}) };
     this.db.prepare('UPDATE cases SET status=?, decision_json=?, updated_at=? WHERE id=?').run(status, json(settled), at, caseId);
     this.db.prepare('UPDATE payouts SET status=?, decision_by=?, reason=?, updated_at=? WHERE id=?').run(payoutStatus, by, reason, at, payout.id);
-    if (cost > 0) this.ledger({ type: 'cost', label: 'AI decision', detail: 'AI inference', amount: -Math.abs(cost), ref: caseId, metadata: { caseId, model: by, ...(usage || {}) } });
-    this.ledger({ type: 'decision', label: `Payout ${status}`, detail: reason, amount: 0, ref: payout.id, metadata: { caseId, tool: decision.name, by } });
+    if (cost > 0) this.ledger({ type: 'cost', label: 'AI decision', detail: 'AI inference', amount: -Math.abs(cost), ref: caseId, metadata: { caseId, model: by, costUsd: round(cost), billingBasis: usage?.estimated ? 'conservative token limit estimate' : 'provider token usage × published model rates', inputRateUsdPerMillion: this.config.aiInputCostPerMillion, cacheReadRateUsdPerMillion: this.config.aiCacheReadCostPerMillion, outputRateUsdPerMillion: this.config.aiOutputCostPerMillion, ...(usage || {}) } });
+    this.ledger({ type: 'decision', label: `Payout ${status}`, detail: reason, amount: 0, ref: payout.id, metadata: { caseId, tool: decision.name, by, policyResult: settled.policyResult, economics } });
     return { case: this.case(caseId), payout: this.payout(payout.id), decision: settled };
   }
 
@@ -348,7 +446,7 @@ export class BerryStore {
       if (result.status !== 'paid') throw new Error('Payout rail did not complete');
       const settledAt = now();
       this.db.prepare("UPDATE payouts SET status='paid', tx_ref=?, updated_at=? WHERE id=?").run(result.reference, settledAt, payoutId);
-      this.ledger({ type: 'payout', label: 'Trader settlement', detail: result.simulated ? 'Demo treasury settlement' : `USDC settlement on NEAR ${result.network || ''}`.trim(), amount: -payout.amount, ref: result.reference, metadata: { payoutId, wallet: payout.requested_wallet, rail: result.network || this.config.rail, simulated: Boolean(result.simulated) } });
+      this.ledger({ type: 'payout', label: 'Trader settlement', detail: result.simulated ? 'Demo treasury settlement' : `USDC settlement on NEAR ${result.network || ''}`.trim(), amount: -payout.amount, ref: result.reference, metadata: { payoutId, wallet: payout.requested_wallet, rail: result.network || this.config.rail, simulated: Boolean(result.simulated), ...this.payoutEconomics(payout), balanceBefore: result.balanceBefore ?? null, balanceAfter: result.balanceAfter ?? null, balanceDelta: result.balanceBefore != null && result.balanceAfter != null ? round(result.balanceAfter - result.balanceBefore) : null, asset: 'USDC', explorerUrl: result.network === 'testnet' && !result.simulated ? `https://testnet.nearblocks.io/txns/${encodeURIComponent(result.reference)}` : null } });
       return this.payout(payoutId);
     }).catch((error) => {
       this.db.prepare("UPDATE payouts SET status='approved', updated_at=? WHERE id=?").run(now(), payoutId);
@@ -389,6 +487,21 @@ export class BerryStore {
     return rows.map((row) => ({ id: row.id, type: row.type, label: row.label, detail: row.detail, amount: Number(row.amount), ref: row.ref, at: row.created_at, metadata: parse(row.metadata_json) }));
   }
 
+  payoutEvidence(payoutId) {
+    const payout = this.payout(payoutId);
+    if (!payout) return null;
+    const caseRow = this.db.prepare('SELECT * FROM cases WHERE payout_id=? ORDER BY created_at DESC LIMIT 1').get(payoutId);
+    const decision = parse(caseRow?.decision_json, null);
+    const settlementRow = payout.tx_ref ? this.db.prepare("SELECT * FROM ledger WHERE type='payout' AND ref=? ORDER BY created_at DESC LIMIT 1").get(payout.tx_ref) : null;
+    const settlement = settlementRow ? parse(settlementRow.metadata_json) : {};
+    return {
+      decision: decision ? { tool: decision.tool, by: decision.by, reason: decision.reason, at: decision.at, cost: Number(decision.cost || 0), policyResult: decision.policyResult, policyReason: decision.policyReason || null, usage: decision.usage || null } : null,
+      economics: decision?.economics || this.payoutEconomics(payout),
+      settlement: payout.status === 'paid' ? { status: payout.status, amount: Number(payout.amount), asset: settlement.asset || 'USDC', network: settlement.rail, balanceBefore: settlement.balanceBefore, balanceAfter: settlement.balanceAfter, balanceDelta: settlement.balanceDelta, txHash: payout.tx_ref, explorerUrl: settlement.explorerUrl || null, simulated: Boolean(settlement.simulated) } : { status: payout.status, amount: Number(payout.amount), txHash: payout.tx_ref || null },
+      policy: { payoutCap: this.settings().payoutCap, dailyPaid: this.dailyPaid(), aiCap: this.settings().aiCap, aiSpend: this.dailyAiCost() }
+    };
+  }
+
   cases() { return this.db.prepare("SELECT * FROM cases WHERE status IN ('open','escalated') ORDER BY updated_at DESC").all().map((row) => this.caseView(row)); }
   caseView(row) { return { id: row.id, type: row.kind, wallet: row.wallet, status: row.status, payload: parse(row.payload_json), decision: parse(row.decision_json, null), createdAt: row.created_at, updatedAt: row.updated_at }; }
   accounts(filter) {
@@ -402,21 +515,51 @@ export class BerryStore {
   me(wallet) {
     const user = this.ensureUser(wallet);
     const challenge = this.activeChallenge(wallet);
+    const pendingPayment = this.db.prepare("SELECT id FROM challenge_payments WHERE wallet=? AND status='pending' ORDER BY created_at DESC LIMIT 1").get(wallet);
+    const payment = pendingPayment ? this.challengePayment(pendingPayment.id, wallet) : null;
+    const pendingChallengePayment = payment ? {
+      id: payment.id, size: payment.size, fee: payment.fee, status: payment.status,
+      providerStatus: payment.provider_status, refundTo: payment.refund_to,
+      depositAddress: payment.quote.depositAddress, depositMemo: payment.quote.depositMemo,
+      amountIn: payment.quote.amountIn, amountInFormatted: payment.quote.amountInFormatted,
+      originAsset: payment.quote.originAsset, amountOut: payment.quote.amountOut,
+      deadline: payment.quote.deadline, explorerUrl: payment.quote.explorerUrl,
+      paymentNetwork: 'NEAR Intents mainnet',
+      evaluationNetwork: this.config.rail === 'testnet' ? 'NEAR testnet' : this.config.rail === 'mainnet' ? 'NEAR mainnet' : 'Demo treasury'
+    } : null;
     const payout = challenge ? this.db.prepare('SELECT * FROM payouts WHERE challenge_id=? ORDER BY created_at DESC LIMIT 1').get(challenge.id) : null;
     const details = challenge ? { ...challenge, rules: parse(challenge.rules_json), positions: this.openPositions(challenge.id), orders: this.allPositions(challenge.id) } : null;
-    return { user, challenge: details, payout: payout ? { ...payout, amount: Number(payout.amount) } : null, pool: this.pool(), treasury: this.config.treasuryAccount, settings: this.settings(), prices: pricesAt(), now: now() };
+    return { user, challenge: details, pendingChallengePayment, payout: payout ? { ...payout, amount: Number(payout.amount), evidence: this.payoutEvidence(payout.id) } : null, pool: this.pool(), treasury: this.config.treasuryAccount, settings: this.settings(), prices: pricesAt(), now: now() };
   }
 
   seedDemo(wallet) {
     this.ensureUser(wallet);
     const existing = this.activeChallenge(wallet);
     if (existing) return existing;
-    const record = this.createChallenge(wallet, 5000);
+    const record = this.createChallenge(wallet, 5000, { feeOverride: 0 });
     // The commercial terms remain independent of the testnet demo. This
     // deliberately creates a $0.80 qualifying settlement so a $1 test-USDC
     // treasury can prove the complete rail without exceeding its balance.
     this.db.prepare("UPDATE challenges SET status='funded', balance=?, trading_days=3, updated_at=? WHERE id=?").run(5000.89, now(), record.id);
     return this.challenge(record.id);
+  }
+
+  resetDemo(wallet) {
+    this.ensureUser(wallet);
+    if (this.db.prepare("SELECT 1 FROM challenge_payments WHERE wallet=? AND status='pending' LIMIT 1").get(wallet)) throw new Error('Check the pending NEAR Intents payment before resetting the demo');
+    const existing = this.activeChallenge(wallet);
+    if (existing) {
+      const pending = this.db.prepare("SELECT 1 FROM payouts WHERE challenge_id=? AND status IN ('requested','approved','sending') LIMIT 1").get(existing.id);
+      if (pending) throw new Error('Settle or close the pending payout before resetting the demo');
+      this.db.exec('BEGIN IMMEDIATE');
+      try {
+        this.db.prepare("UPDATE positions SET status='cancelled',closed_at=? WHERE challenge_id=? AND status='open'").run(now(), existing.id);
+        this.db.prepare("UPDATE challenges SET status='archived',updated_at=? WHERE id=?").run(now(), existing.id);
+        this.ledger({ type: 'demo', label: 'Demo reset', detail: 'Previous run archived; its ledger evidence is preserved', amount: 0, ref: existing.id, metadata: { wallet, challengeId: existing.id } });
+        this.db.exec('COMMIT');
+      } catch (error) { this.db.exec('ROLLBACK'); throw error; }
+    }
+    return null;
   }
 
   close() { this.db.close(); }

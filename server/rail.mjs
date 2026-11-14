@@ -41,6 +41,7 @@ async function outlayerTestnetPayout({ to, amount, reference, config, fetchImpl 
   });
   if (!/^\d+$/.test(String(balance.balance || ''))) throw new Error('OutLayer returned an invalid USDC balance');
   if (BigInt(balance.balance) < required) throw new Error('OutLayer treasury USDC balance is insufficient');
+  const balanceBefore = Number(BigInt(balance.balance)) / 1_000_000;
   const storage = await request({ path: '/wallet/v1/storage-deposit', body: { token: config.usdcContract, account_id: to } });
   if (storage.status === 'pending_approval') throw new Error(`OutLayer policy approval is pending${storage.request_id ? ` (${storage.request_id})` : ''}`);
   if (storage.status && storage.status !== 'success') throw new Error(`Could not register recipient storage: ${storage.status}`);
@@ -56,7 +57,19 @@ async function outlayerTestnetPayout({ to, amount, reference, config, fetchImpl 
   });
   if (transfer.status === 'pending_approval') throw new Error(`OutLayer policy approval is pending${transfer.request_id ? ` (${transfer.request_id})` : ''}`);
   if (transfer.status !== 'success' || !transfer.tx_hash) throw new Error(`OutLayer transfer was not confirmed${transfer.status ? ` (${transfer.status})` : ''}`);
-  return { status: 'paid', reference: transfer.tx_hash, simulated: false, network: 'testnet' };
+  let balanceAfter = null;
+  if (config.captureBalanceProof) {
+    try {
+      const after = await outlayerRequest({
+        baseUrl: config.outlayerApi,
+        walletKey: config.outlayerWalletKey,
+        path: `/wallet/v1/balance?chain=near&token=${encodeURIComponent(config.usdcContract)}`,
+        method: 'GET', timeoutMs: config.outlayerTimeoutMs, fetchImpl
+      });
+      if (/^\d+$/.test(String(after.balance || ''))) balanceAfter = Number(BigInt(after.balance)) / 1_000_000;
+    } catch { /* The transfer is already confirmed; retain its proof if the follow-up balance read is unavailable. */ }
+  }
+  return { status: 'paid', reference: transfer.tx_hash, simulated: false, network: 'testnet', ...(config.captureBalanceProof ? { balanceBefore, balanceAfter } : {}) };
 }
 
 export async function pay({ rail, signer, to, amount, reference, config, fetchImpl = fetch }) {

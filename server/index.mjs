@@ -6,6 +6,7 @@ import { config } from './config.mjs';
 import { BerryStore } from './store.mjs';
 import { decideCase } from './agent.mjs';
 import { pay } from './rail.mjs';
+import { createChallengeQuote, challengeQuoteStatus, validMainnetAccount } from './intents.mjs';
 import { pricesAt } from './rules.mjs';
 
 const MIME = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.svg': 'image/svg+xml', '.css': 'text/css', '.json': 'application/json; charset=utf-8', '.png': 'image/png', '.ico': 'image/x-icon' };
@@ -63,7 +64,7 @@ export function createBerryServer({ appConfig = config, store = new BerryStore({
         return;
       }
 
-        if (method === 'GET' && path === '/api/config') return json(response, 200, { rail: appConfig.rail, demoMode: appConfig.authMode === 'demo', freeEvaluation: appConfig.rail === 'testnet' && appConfig.authMode === 'demo', aiReady: Boolean(appConfig.aiBaseUrl && appConfig.aiApiKey && appConfig.aiModel), settlementNetwork: appConfig.rail === 'testnet' ? 'NEAR testnet' : 'Demo treasury', treasury: appConfig.treasuryAccount, settings: store.settings() });
+        if (method === 'GET' && path === '/api/config') return json(response, 200, { rail: appConfig.rail, demoMode: appConfig.authMode === 'demo', freeEvaluation: ['mock', 'testnet'].includes(appConfig.rail) && appConfig.authMode === 'demo' && Object.values(store.settings().challengeFees).every((fee) => Number(fee) === 0), aiReady: Boolean(appConfig.aiBaseUrl && appConfig.aiApiKey && appConfig.aiModel), nearIntentsConfigured: Boolean(appConfig.nearIntentsEnabled && validMainnetAccount(appConfig.nearIntentsReceiver)), settlementNetwork: appConfig.rail === 'testnet' ? 'NEAR testnet' : appConfig.rail === 'mainnet' ? 'NEAR mainnet' : 'Demo treasury', treasury: appConfig.treasuryAccount, settings: store.settings() });
       if (method === 'POST' && path === '/api/auth/session') {
         if (appConfig.authMode !== 'demo') return error(response, 501, 'Wallet signature sign-in is not configured. Use AUTH_MODE=demo for the testnet demo.');
         const wallet = appConfig.demoWallet;
@@ -89,13 +90,40 @@ export function createBerryServer({ appConfig = config, store = new BerryStore({
 
       if (method === 'GET' && path === '/api/me') {
         const user = requireUser(request, response); if (!user) return;
-        return json(response, 200, { ...store.me(user.wallet), rail: appConfig.rail, demoMode: appConfig.authMode === 'demo', freeEvaluation: appConfig.rail === 'testnet' && appConfig.authMode === 'demo', aiReady: Boolean(appConfig.aiBaseUrl && appConfig.aiApiKey && appConfig.aiModel), settlementNetwork: appConfig.rail === 'testnet' ? 'NEAR testnet' : 'Demo treasury' });
+        return json(response, 200, { ...store.me(user.wallet), rail: appConfig.rail, demoMode: appConfig.authMode === 'demo', freeEvaluation: ['mock', 'testnet'].includes(appConfig.rail) && appConfig.authMode === 'demo' && Object.values(store.settings().challengeFees).every((fee) => Number(fee) === 0), aiReady: Boolean(appConfig.aiBaseUrl && appConfig.aiApiKey && appConfig.aiModel), nearIntentsConfigured: Boolean(appConfig.nearIntentsEnabled && validMainnetAccount(appConfig.nearIntentsReceiver)), settlementNetwork: appConfig.rail === 'testnet' ? 'NEAR testnet' : appConfig.rail === 'mainnet' ? 'NEAR mainnet' : 'Demo treasury' });
+      }
+      if (method === 'POST' && path === '/api/challenges/payment-quote') {
+        const user = requireUser(request, response); if (!user) return;
+        if (!appConfig.nearIntentsEnabled || !validMainnetAccount(appConfig.nearIntentsReceiver)) return error(response, 503, 'NEAR Intents checkout is not configured for mainnet.');
+        const input = await body(request), size = Number(input.size), fee = Number(store.settings().challengeFees[size] || 0);
+        if (!fee) return error(response, 409, 'This evaluation is free in the current demo.');
+        const refundTo = String(input.refundTo || '').trim();
+        if (!validMainnetAccount(refundTo)) return error(response, 400, 'Enter a NEAR mainnet account you control for refunds.');
+        const quoteResult = await createChallengeQuote({ size, fee, refundTo, config: appConfig });
+        const payment = store.createChallengePayment(user.wallet, size, refundTo, quoteResult.quote);
+        return json(response, 201, { payment: { id: payment.id, size: payment.size, fee: payment.fee, status: payment.status, refundTo: payment.refund_to, depositAddress: payment.quote.depositAddress, depositMemo: payment.quote.depositMemo, amountIn: payment.quote.amountIn, amountInFormatted: payment.quote.amountInFormatted, originAsset: payment.quote.originAsset, amountOut: payment.quote.amountOut, deadline: payment.quote.deadline, explorerUrl: payment.quote.explorerUrl, paymentNetwork: 'NEAR Intents mainnet', evaluationNetwork: appConfig.rail === 'testnet' ? 'NEAR testnet' : 'NEAR mainnet' } });
+      }
+      if (method === 'GET' && /^\/api\/challenges\/payments\/[^/]+$/.test(path)) {
+        const user = requireUser(request, response); if (!user) return;
+        let payment = store.challengePayment(parts[3], user.wallet);
+        if (!payment) return error(response, 404, 'Payment not found');
+        let challenge = payment.challenge_id ? store.challenge(payment.challenge_id) : null;
+        if (payment.status === 'pending') {
+          const provider = await challengeQuoteStatus({ depositAddress: payment.quote.depositAddress, depositMemo: payment.quote.depositMemo, config: appConfig });
+          if (String(provider.status || '').toUpperCase() === 'SUCCESS') {
+            const fulfilled = store.fulfillChallengePayment(payment.id, user.wallet, provider);
+            payment = fulfilled.payment; challenge = fulfilled.challenge;
+          } else payment = store.updateChallengePayment(payment.id, user.wallet, provider);
+        }
+        return json(response, 200, { payment: { id: payment.id, size: payment.size, fee: payment.fee, status: payment.status, providerStatus: payment.provider_status, refundTo: payment.refund_to, depositAddress: payment.quote.depositAddress, depositMemo: payment.quote.depositMemo, amountIn: payment.quote.amountIn, amountInFormatted: payment.quote.amountInFormatted, originAsset: payment.quote.originAsset, amountOut: payment.quote.amountOut, deadline: payment.quote.deadline, explorerUrl: payment.quote.explorerUrl, paymentNetwork: 'NEAR Intents mainnet', evaluationNetwork: appConfig.rail === 'testnet' ? 'NEAR testnet' : 'NEAR mainnet' }, challenge });
       }
       if (method === 'POST' && path === '/api/challenges') {
         const user = requireUser(request, response); if (!user) return;
         const existing = store.activeChallenge(user.wallet);
         if (existing) return json(response, 200, { challenge: existing, status: existing.status, reused: true });
-        const challenge = store.createChallenge(user.wallet, (await body(request)).size);
+        const input = await body(request), fee = Number(store.settings().challengeFees[Number(input.size)] || 0);
+        if (fee > 0) return error(response, 402, 'A confirmed NEAR Intents payment is required before this challenge can start.');
+        const challenge = store.createChallenge(user.wallet, input.size);
         return json(response, 201, { challenge, status: 'active', free: challenge.fee === 0 });
       }
       if (method === 'POST' && /^\/api\/challenges\/[^/]+\/fund$/.test(path)) {
@@ -139,7 +167,7 @@ export function createBerryServer({ appConfig = config, store = new BerryStore({
         const user = requireUser(request, response); if (!user) return;
         const payout = store.payout(parts[2]);
         if (!payout || payout.wallet !== user.wallet) return error(response, 404, 'Payout not found');
-        return json(response, 200, { id: payout.id, status: payout.status, amount: Number(payout.amount), wallet: payout.requested_wallet, decision: { by: payout.decision_by, reason: payout.reason, at: payout.updated_at }, tx: payout.tx_ref });
+        return json(response, 200, { id: payout.id, status: payout.status, amount: Number(payout.amount), wallet: payout.requested_wallet, decision: { by: payout.decision_by, reason: payout.reason, at: payout.updated_at }, tx: payout.tx_ref, evidence: store.payoutEvidence(payout.id) });
       }
       if (method === 'POST' && /^\/api\/payouts\/[^/]+\/confirm$/.test(path)) {
         const user = requireUser(request, response); if (!user) return;
@@ -162,6 +190,11 @@ export function createBerryServer({ appConfig = config, store = new BerryStore({
         const user = requireUser(request, response); if (!user) return;
         if (!['mock', 'testnet'].includes(appConfig.rail) || appConfig.authMode !== 'demo') return error(response, 403, 'Demo seed is available only for a configured local or testnet demo session');
         return json(response, 200, { challenge: store.seedDemo(user.wallet) });
+      }
+      if (method === 'POST' && path === '/api/demo/reset') {
+        const user = requireUser(request, response); if (!user) return;
+        if (!['mock', 'testnet'].includes(appConfig.rail) || appConfig.authMode !== 'demo' || user.wallet !== appConfig.demoWallet) return error(response, 403, 'Demo reset is available only to the configured demo account.');
+        return json(response, 200, { challenge: store.resetDemo(user.wallet) });
       }
 
       if (path.startsWith('/api/ops/')) {
