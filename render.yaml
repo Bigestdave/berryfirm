@@ -1,0 +1,49 @@
+services:
+  - type: web
+    name: berry-firm
+    runtime: node
+    plan: 0.5c-512mb
+    buildCommand: npm install
+    startCommand: npm start
+    healthCheckPath: /api/config
+    disk:
+      name: berry-firm-data
+      mountPath: /var/data
+      sizeGB: 1
+    envVars:
+      - key: NODE_VERSION
+        value: 24.18.0
+      - key: RAIL
+        value: testnet
+      - key: SIGNER
+        value: outlayer
+      - key: AUTH_MODE
+        value: demo
+      - key: OWNER_ACCOUNT
+        value: berryfirm.testnet
+      - key: DEMO_WALLET
+        value: berryfirm.testnet
+      - key: TREASURY_ACCOUNT
+        value: 682a97c9cf54a53712daeade39eb91703ebdf747bfe187cd4f7b02c28fd992de
+      - key: BERRY_DB_PATH
+        value: /var/data/berry.sqlite
+      - key: USDC_CONTRACT
+        value: 3e2210e1184b45b64c8a434c0a7e7b23cc04ea7eb7a6c3c32520d03d4afcb8af
+      - key: OUTLAYER_API
+        value: https://testnet-api.outlayer.ai
+      - key: OUTLAYER_WALLET_KEY
+        sync: false
+      - key: AI_BASE_URL
+        value: https://cloud-api.near.ai/v1
+      - key: AI_API_KEY
+        sync: false
+      - key: AI_MODEL
+        value: z-ai/glm-5.3-flash
+      - key: AI_MAX_OUTPUT_TOKENS
+        value: "1024"
+      - key: DAILY_AI_CAP
+        value: "0.05"
+      - key: CAPTURE_BALANCE_PROOF
+        value: "true"
+      - key: NEAR_INTENTS_ENABLED
+        value: "false"

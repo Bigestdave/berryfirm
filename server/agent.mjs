@@ -60,7 +60,7 @@ export async function decideCase({ store, config, caseRecord }) {
   aiReservations.set(reservationKey, maxCost);
 
   const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 12_000);
+  const timeout = setTimeout(() => controller.abort(), 45_000);
   let cost = 0, usage = null;
   try {
     const endpoint = `${config.aiBaseUrl.replace(/\/$/, '')}/chat/completions`;

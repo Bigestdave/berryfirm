@@ -50,6 +50,17 @@ npm start
 
 Open [http://localhost:3000](http://localhost:3000). In the demo setup, the app signs into the configured demo account automatically. Open **Profile → Operator console** for owner tools; the public ledger is at `/#ledger` and policy controls are at `/#rules`.
 
+## Deploy the judge demo to Render
+
+The repository includes a Render Blueprint in `render.yaml`. It creates one Node.js web service with the NEAR testnet demo settings and a 1 GB persistent disk for the SQLite ledger. The service writes its database to `/var/data/berry.sqlite`; keep it to one instance while it uses SQLite.
+
+1. In Render, choose **New → Blueprint**, connect `Bigestdave/berryfirm`, select the `main` branch, and use the repository's `render.yaml`.
+2. When prompted, enter `AI_API_KEY` and `OUTLAYER_WALLET_KEY` from your local `.env` directly into Render's secret fields. Never add either key to GitHub or paste it into chat.
+3. Review the paid web-service and persistent-disk charges in Render before creating the resources. A free web service has an ephemeral filesystem, so its SQLite ledger would be lost on restart or spin-down.
+4. When the service is live, use its `onrender.com` URL. **Profile → Run payout demo** seeds a qualifying test case; the testnet treasury is shared with the local demo and is not replenished by **Reset run**.
+
+NEAR Intents challenge checkout remains disabled in this demo. Evaluation access is free, trading uses the controlled simulation, and settlements use test USDC on NEAR testnet.
+
 ### Two-minute judge run
 
 1. Start with `RAIL=testnet`, `AUTH_MODE=demo`, a funded OutLayer test-USDC treasury, and a working NEAR AI key if you want a model decision in the run.

@@ -42,7 +42,7 @@ export const config = Object.freeze({
   aiCacheReadCostPerMillion: Math.max(0, number('AI_CACHE_READ_COST_PER_1M', 0.012)),
   aiOutputCostPerMillion: Math.max(0, number('AI_OUTPUT_COST_PER_1M', 0.5)),
   aiMaxInputTokens: Math.max(1, Math.floor(number('AI_MAX_INPUT_TOKENS', 8192))),
-  aiMaxOutputTokens: Math.max(1, Math.floor(number('AI_MAX_OUTPUT_TOKENS', 256))),
+  aiMaxOutputTokens: Math.max(1, Math.floor(number('AI_MAX_OUTPUT_TOKENS', 1024))),
   nearIntentsApi: env.NEAR_INTENTS_API || 'https://1click.chaindefuser.com',
   nearIntentsApiKey: env.NEAR_INTENTS_API_KEY || '',
   nearIntentsEnabled: String(env.NEAR_INTENTS_ENABLED || '').toLowerCase() === 'true',
