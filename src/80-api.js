@@ -3,7 +3,30 @@
    entry point for state-changing actions when BERRY.api is enabled. */
 const BerryAPI=(()=>{
  let online=false,loading=false;
- const fail=e=>{console.warn('Berry API',e);const message=String(e?.message||'');const copy=/ai api key|berry ai.*key/i.test(message)?'Add the AI key and restart.':/treasury.*insufficient|insufficient.*usdc/i.test(message)?'Treasury needs funding.':/near intents|payment service/i.test(message)?'Payment service unavailable.':/mainnet account/i.test(message)?'Use a NEAR mainnet account.':/paused/i.test(message)?'Payouts are paused.':/pending payout|settle or close/i.test(message)?'A payout is still open. Review Payouts first.':/pending.*payment/i.test(message)?'Check the pending payment first.':/reset your current demo|funded account is required/i.test(message)?'Reset the current demo, then try again.':/already has a payout request/i.test(message)?'A payout is already open. Check Payouts.':/already have an active|account already active/i.test(message)?'Account already active. Resume it.':/failed to fetch|network|fetch|connection|reach/i.test(message)?'Server unavailable. Refresh.':'Couldn’t complete that. Try again.';toast(copy,'err')};
+ const fail=e=>{
+  console.warn('Berry API',e);const message=String(e?.message||'');
+  const copy=/ai api key|berry ai.*key/i.test(message)?'Add the AI key and restart.':
+   /testnet wallet is not configured|outlayer.*401|invalid_api_key/i.test(message)?'Treasury key missing or invalid. Check Render.':
+   /pending_approval|approval is pending/i.test(message)?'Treasury approval pending in OutLayer.':
+   /outlayer.*403|policy_denied|policy blocked/i.test(message)?'Treasury policy blocked this payout.':
+   /outlayer 402|wallet_underfunded|vault_underfunded|insufficient_balance/i.test(message)?'Treasury needs test USDC or gas.':
+   /treasury.*insufficient|insufficient.*usdc/i.test(message)?'Treasury needs more test USDC.':
+   /insufficient.*near|gas.*insufficient|not enough.*gas/i.test(message)?'Treasury needs NEAR for gas.':
+   /recipient storage|storage-deposit|storage registration/i.test(message)?'Recipient USDC setup failed.':
+   /onchain_tx_failed|outlayer 422/i.test(message)?'NEAR rejected the transfer. Check details.':
+   /outlayer 5\d\d|status is unclear|outcome.*unknown|timed out|abort/i.test(message)?'Transfer status unclear. Check before retrying.':
+   /this payout is not approved/i.test(message)?'Payout state changed. Refresh and check status.':
+   /near intents|payment service/i.test(message)?'Payment service unavailable.':
+   /mainnet account/i.test(message)?'Use a NEAR mainnet account.':
+   /paused/i.test(message)?'Payouts are paused.':
+   /pending payout|settle or close/i.test(message)?'A payout is still open. Review Payouts first.':
+   /pending.*payment/i.test(message)?'Check the pending payment first.':
+   /reset your current demo|funded account is required/i.test(message)?'Reset the current demo, then try again.':
+   /already has a payout request/i.test(message)?'A payout is already open. Check Payouts.':
+   /already have an active|account already active/i.test(message)?'Account already active. Resume it.':
+   /failed to fetch|network|fetch|connection|reach/i.test(message)?'Server unavailable. Refresh.':'Couldn’t complete that. Try again.';
+  toast(copy,'err')
+ };
  const call=async(path,o={})=>{
   const r=await fetch(path,{credentials:'same-origin',headers:{'content-type':'application/json',...(o.headers||{})},...o});
   const x=await r.json().catch(()=>({}));if(!r.ok)throw new Error(x.error||'Request failed');return x
@@ -58,7 +81,7 @@ const BerryAPI=(()=>{
   fund:id=>perform(async()=>{await call('/api/challenges/'+encodeURIComponent(id)+'/fund',{method:'POST'});await refresh({render:false});go('home');toast('Funded account started')}),
   requestPayout:wallet=>perform(async()=>{const r=await call('/api/payouts',{method:'POST',body:JSON.stringify({wallet})});await refresh({render:false});S.apiDecision=r.decision;go('payout');toast(r.payout.status==='approved'?'Payout approved':r.payout.reason||'Payout needs review',r.payout.status==='approved'?'ok':'warn')}),
   reviewPayout:id=>perform(async()=>{const r=await call('/api/payouts/'+encodeURIComponent(id)+'/review',{method:'POST'});await refresh({render:false});S.apiDecision=r.decision;go('payout');toast(r.payout.status==='approved'?'Berry AI approved payout':'Payout needs review',r.payout.status==='approved'?'ok':'warn')}),
-  confirmPayout:id=>perform(async()=>{await call('/api/payouts/'+encodeURIComponent(id)+'/confirm',{method:'POST'});await refresh({render:false});draw();toast(S.rail==='testnet'?'Testnet payout settled':'Payout settled')}),
+  confirmPayout:id=>perform(async()=>{const r=await call('/api/payouts/'+encodeURIComponent(id)+'/confirm',{method:'POST'});S.apiPayout=r.payout;S.pay=payState(r.payout.status);S.amt=Number(r.payout.amount);S.net=S.amt;try{await refresh({render:false,ops:false})}catch(e){console.warn('Payout state refresh failed.',e)}draw();toast(r.payout.status==='paid'?(S.rail==='testnet'?'Testnet payout settled':'Payout settled'):r.payout.settlement_state==='awaiting_approval'?'Treasury approval pending.':r.payout.status==='sending'?'Transfer pending. Do not retry.':'Payout attempt failed.',r.payout.status==='paid'?'ok':'warn')}),
   appeal:message=>perform(async()=>{await call('/api/appeals',{method:'POST',body:JSON.stringify({message})});S.appeal=1;draw();toast('Appeal sent to the owner queue')}),
   updateRules:patch=>perform(async()=>{await call('/api/ops/rules',{method:'PATCH',body:JSON.stringify(patch)});await refresh();}),
   resolveCase:(id,action,reason)=>perform(async()=>{await call('/api/ops/cases/'+encodeURIComponent(id)+'/resolve',{method:'POST',body:JSON.stringify({action,reason})});await refresh({render:false});go('queue');toast('Case updated')}),

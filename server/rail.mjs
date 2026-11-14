@@ -1,5 +1,7 @@
 import { randomUUID } from 'node:crypto';
 
+const pendingStatuses = new Set(['pending_approval', 'processing', 'pending_deposit']);
+
 /**
  * All money movement goes through this boundary. The agent can never call this
  * module directly: `store.confirmPayout` invokes it only after the policy gate.
@@ -21,7 +23,17 @@ const outlayerRequest = async ({ baseUrl, walletKey, path, method = 'POST', body
       ...(body === undefined ? {} : { body: JSON.stringify(body) })
     });
     const payload = await response.json().catch(() => ({}));
-    if (!response.ok) throw new Error(`OutLayer ${response.status}: ${payload.message || payload.error || 'request failed'}`);
+    if (!response.ok) {
+      const providerError = payload.error;
+      const providerCode = typeof providerError === 'string' ? providerError : providerError?.code || null;
+      const detail = payload.message || (typeof providerError === 'string' ? providerError : providerError?.message) || 'request failed';
+      const error = new Error(`OutLayer ${response.status}: ${detail}`);
+      error.outcomeKnown = response.status >= 400 && response.status < 500;
+      error.providerCode = providerCode;
+      error.requestId = payload.request_id || payload.requestId || null;
+      error.txHash = payload.tx_hash || payload.txHash || providerError?.tx_hash || providerError?.txHash || null;
+      throw error;
+    }
     return payload;
   } finally { clearTimeout(timeout); }
 };
@@ -43,20 +55,33 @@ async function outlayerTestnetPayout({ to, amount, reference, config, fetchImpl 
   if (BigInt(balance.balance) < required) throw new Error('OutLayer treasury USDC balance is insufficient');
   const balanceBefore = Number(BigInt(balance.balance)) / 1_000_000;
   const storage = await request({ path: '/wallet/v1/storage-deposit', body: { token: config.usdcContract, account_id: to } });
-  if (storage.status === 'pending_approval') throw new Error(`OutLayer policy approval is pending${storage.request_id ? ` (${storage.request_id})` : ''}`);
+  if (pendingStatuses.has(storage.status)) return { status: 'pending', state: storage.status === 'pending_approval' ? 'awaiting_approval' : 'processing', requestId: storage.request_id || null, message: 'Recipient USDC registration is pending' };
   if (storage.status && storage.status !== 'success') throw new Error(`Could not register recipient storage: ${storage.status}`);
-  const transfer = await request({
-    path: '/wallet/v1/call',
-    body: {
-      receiver_id: config.usdcContract,
-      method_name: 'ft_transfer',
-      args: { receiver_id: to, amount: required.toString(), memo: `Berry Firm settlement ${reference}` },
-      gas: '30000000000000',
-      deposit: '1'
-    }
-  });
-  if (transfer.status === 'pending_approval') throw new Error(`OutLayer policy approval is pending${transfer.request_id ? ` (${transfer.request_id})` : ''}`);
-  if (transfer.status !== 'success' || !transfer.tx_hash) throw new Error(`OutLayer transfer was not confirmed${transfer.status ? ` (${transfer.status})` : ''}`);
+  let transfer;
+  try {
+    transfer = await request({
+      path: '/wallet/v1/call',
+      body: {
+        receiver_id: config.usdcContract,
+        method_name: 'ft_transfer',
+        args: { receiver_id: to, amount: required.toString(), memo: `Berry Firm settlement ${reference}` },
+        gas: '30000000000000',
+        deposit: '1'
+      }
+    });
+  } catch (error) {
+    if (error.outcomeKnown !== true) error.outcomeUnknown = true;
+    throw error;
+  }
+  if (pendingStatuses.has(transfer.status)) return { status: 'pending', state: transfer.status === 'pending_approval' ? 'awaiting_approval' : 'processing', requestId: transfer.request_id || null, message: 'USDC transfer is still processing' };
+  if (transfer.status === 'failed') throw new Error(`OutLayer transfer failed${transfer.error ? `: ${transfer.error}` : ''}`);
+  if (transfer.status !== 'success' || !transfer.tx_hash) {
+    const error = new Error(`OutLayer transfer status is unclear${transfer.status ? `: ${transfer.status}` : ''}`);
+    error.outcomeUnknown = true;
+    error.requestId = transfer.request_id || null;
+    error.txHash = transfer.tx_hash || transfer.txHash || null;
+    throw error;
+  }
   let balanceAfter = null;
   if (config.captureBalanceProof) {
     try {

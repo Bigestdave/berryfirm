@@ -64,7 +64,7 @@ export function createBerryServer({ appConfig = config, store = new BerryStore({
         return;
       }
 
-        if (method === 'GET' && path === '/api/config') return json(response, 200, { rail: appConfig.rail, demoMode: appConfig.authMode === 'demo', freeEvaluation: ['mock', 'testnet'].includes(appConfig.rail) && appConfig.authMode === 'demo' && Object.values(store.settings().challengeFees).every((fee) => Number(fee) === 0), aiReady: Boolean(appConfig.aiBaseUrl && appConfig.aiApiKey && appConfig.aiModel), nearIntentsConfigured: Boolean(appConfig.nearIntentsEnabled && validMainnetAccount(appConfig.nearIntentsReceiver)), settlementNetwork: appConfig.rail === 'testnet' ? 'NEAR testnet' : appConfig.rail === 'mainnet' ? 'NEAR mainnet' : 'Demo treasury', treasury: appConfig.treasuryAccount, settings: store.settings() });
+      if (method === 'GET' && path === '/api/config') return json(response, 200, { rail: appConfig.rail, demoMode: appConfig.authMode === 'demo', freeEvaluation: ['mock', 'testnet'].includes(appConfig.rail) && appConfig.authMode === 'demo' && Object.values(store.settings().challengeFees).every((fee) => Number(fee) === 0), aiReady: Boolean(appConfig.aiBaseUrl && appConfig.aiApiKey && appConfig.aiModel), treasurySignerReady: appConfig.rail === 'testnet' ? Boolean(appConfig.outlayerWalletKey) : appConfig.rail === 'mock', nearIntentsConfigured: Boolean(appConfig.nearIntentsEnabled && validMainnetAccount(appConfig.nearIntentsReceiver)), settlementNetwork: appConfig.rail === 'testnet' ? 'NEAR testnet' : appConfig.rail === 'mainnet' ? 'NEAR mainnet' : 'Demo treasury', treasury: appConfig.treasuryAccount, settings: store.settings() });
       if (method === 'POST' && path === '/api/auth/session') {
         if (appConfig.authMode !== 'demo') return error(response, 501, 'Wallet signature sign-in is not configured. Use AUTH_MODE=demo for the testnet demo.');
         const wallet = appConfig.demoWallet;
@@ -171,7 +171,9 @@ export function createBerryServer({ appConfig = config, store = new BerryStore({
       }
       if (method === 'POST' && /^\/api\/payouts\/[^/]+\/confirm$/.test(path)) {
         const user = requireUser(request, response); if (!user) return;
-        const payout = await store.confirmPayout(user.wallet, parts[2], (args) => pay({ rail: appConfig.rail, signer: appConfig.signer, config: appConfig, ...args }));
+        let payout;
+        try { payout = await store.confirmPayout(user.wallet, parts[2], (args) => pay({ rail: appConfig.rail, signer: appConfig.signer, config: appConfig, ...args })); }
+        catch (caught) { console.error(`Payout ${parts[2]} confirmation failed: ${caught instanceof Error ? caught.message : 'Unknown settlement error'}`); throw caught; }
         return json(response, 200, { payout });
       }
       if (method === 'POST' && path === '/api/appeals') {

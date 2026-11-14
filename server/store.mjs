@@ -57,6 +57,10 @@ export class BerryStore {
       );
       CREATE TABLE IF NOT EXISTS settings (id INTEGER PRIMARY KEY CHECK (id = 1), json TEXT NOT NULL, updated_at TEXT NOT NULL);
     `);
+    const payoutColumns = new Set(this.db.prepare('PRAGMA table_info(payouts)').all().map((column) => column.name));
+    for (const [name, type] of Object.entries({ settlement_request_id: 'TEXT', settlement_tx_hash: 'TEXT', settlement_state: 'TEXT', settlement_message: 'TEXT' })) {
+      if (!payoutColumns.has(name)) this.db.exec(`ALTER TABLE payouts ADD COLUMN ${name} ${type}`);
+    }
   }
 
   ensureSettings() {
@@ -447,15 +451,31 @@ export class BerryStore {
     const policyError = this.policyCheck(payout);
     if (policyError) throw new Error(`Policy gate: ${policyError}`);
     const at = now();
-    this.db.prepare("UPDATE payouts SET status='sending', updated_at=? WHERE id=?").run(at, payoutId);
+    this.db.prepare("UPDATE payouts SET status='sending', settlement_state='submitting', settlement_message=NULL, updated_at=? WHERE id=?").run(at, payoutId);
     return Promise.resolve(pay({ to: payout.requested_wallet, amount: payout.amount, reference: payout.id })).then((result) => {
+      if (result.status === 'pending') {
+        this.db.prepare("UPDATE payouts SET status='sending', settlement_request_id=?, settlement_state=?, settlement_message=?, updated_at=? WHERE id=?")
+          .run(result.requestId || null, result.state || 'processing', result.message || 'Treasury request is still processing', now(), payoutId);
+        return this.payout(payoutId);
+      }
       if (result.status !== 'paid') throw new Error('Payout rail did not complete');
       const settledAt = now();
-      this.db.prepare("UPDATE payouts SET status='paid', tx_ref=?, updated_at=? WHERE id=?").run(result.reference, settledAt, payoutId);
-      this.ledger({ type: 'payout', label: 'Trader settlement', detail: result.simulated ? 'Demo treasury settlement' : `USDC settlement on NEAR ${result.network || ''}`.trim(), amount: -payout.amount, ref: result.reference, metadata: { payoutId, wallet: payout.requested_wallet, rail: result.network || this.config.rail, simulated: Boolean(result.simulated), ...this.payoutEconomics(payout), balanceBefore: result.balanceBefore ?? null, balanceAfter: result.balanceAfter ?? null, balanceDelta: result.balanceBefore != null && result.balanceAfter != null ? round(result.balanceAfter - result.balanceBefore) : null, asset: 'USDC', explorerUrl: result.network === 'testnet' && !result.simulated ? `https://testnet.nearblocks.io/txns/${encodeURIComponent(result.reference)}` : null } });
+      this.db.exec('BEGIN IMMEDIATE');
+      try {
+        this.db.prepare("UPDATE payouts SET status='paid', tx_ref=?, settlement_tx_hash=?, settlement_state='paid', settlement_message=NULL, updated_at=? WHERE id=?").run(result.reference, result.reference, settledAt, payoutId);
+        this.ledger({ type: 'payout', label: 'Trader settlement', detail: result.simulated ? 'Demo treasury settlement' : `USDC settlement on NEAR ${result.network || ''}`.trim(), amount: -payout.amount, ref: result.reference, metadata: { payoutId, wallet: payout.requested_wallet, rail: result.network || this.config.rail, simulated: Boolean(result.simulated), ...this.payoutEconomics(payout), balanceBefore: result.balanceBefore ?? null, balanceAfter: result.balanceAfter ?? null, balanceDelta: result.balanceBefore != null && result.balanceAfter != null ? round(result.balanceAfter - result.balanceBefore) : null, asset: 'USDC', explorerUrl: result.network === 'testnet' && !result.simulated ? `https://testnet.nearblocks.io/txns/${encodeURIComponent(result.reference)}` : null } });
+        this.db.exec('COMMIT');
+      } catch (error) {
+        this.db.exec('ROLLBACK');
+        error.outcomeUnknown = true;
+        error.txHash = result.reference;
+        throw error;
+      }
       return this.payout(payoutId);
     }).catch((error) => {
-      this.db.prepare("UPDATE payouts SET status='approved', updated_at=? WHERE id=?").run(now(), payoutId);
+      const unknown = error.outcomeUnknown === true;
+      this.db.prepare(`UPDATE payouts SET status=?, settlement_request_id=?, settlement_tx_hash=?, settlement_state=?, settlement_message=?, updated_at=? WHERE id=?`)
+        .run(unknown ? 'sending' : 'approved', error.requestId || null, error.txHash || null, unknown ? (error.requestId ? 'processing' : 'unknown') : 'failed', String(error.message || 'Settlement failed').slice(0, 500), now(), payoutId);
       throw error;
     });
   }
@@ -503,7 +523,7 @@ export class BerryStore {
     return {
       decision: decision ? { tool: decision.tool, by: decision.by, reason: decision.reason, at: decision.at, cost: Number(decision.cost || 0), policyResult: decision.policyResult, policyReason: decision.policyReason || null, usage: decision.usage || null } : null,
       economics: decision?.economics || this.payoutEconomics(payout),
-      settlement: payout.status === 'paid' ? { status: payout.status, amount: Number(payout.amount), asset: settlement.asset || 'USDC', network: settlement.rail, balanceBefore: settlement.balanceBefore, balanceAfter: settlement.balanceAfter, balanceDelta: settlement.balanceDelta, txHash: payout.tx_ref, explorerUrl: settlement.explorerUrl || null, simulated: Boolean(settlement.simulated) } : { status: payout.status, amount: Number(payout.amount), txHash: payout.tx_ref || null },
+      settlement: payout.status === 'paid' ? { status: payout.status, amount: Number(payout.amount), asset: settlement.asset || 'USDC', network: settlement.rail, balanceBefore: settlement.balanceBefore, balanceAfter: settlement.balanceAfter, balanceDelta: settlement.balanceDelta, txHash: payout.tx_ref, explorerUrl: settlement.explorerUrl || null, simulated: Boolean(settlement.simulated) } : { status: payout.status, amount: Number(payout.amount), txHash: payout.settlement_tx_hash || payout.tx_ref || null, requestId: payout.settlement_request_id || null, state: payout.settlement_state || null, message: payout.settlement_message || null },
       policy: { payoutCap: this.settings().payoutCap, dailyPaid: this.dailyPaid(), aiCap: this.settings().aiCap, aiSpend: this.dailyAiCost() }
     };
   }
