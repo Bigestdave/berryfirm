@@ -14,6 +14,29 @@ The modern prop-firm model proves that traders will pay for access to a discipli
 
 Berry Firm makes that operating loop autonomous. The owner defines the commercial policy—risk limits, payout ceiling, treasury reserve, AI budget, enabled markets, and kill switch. The platform takes it from there.
 
+## Product tour
+
+The trader journey and owner console are designed to work well on a phone.
+
+<p align="center"><img src="docs/media/payout-demo.gif" width="190" alt="Mobile recording of Berry Firm's demo payout receipt and payout pool"></p>
+<p align="center"><sub>Short capture of the free demo flow. The payout shown is simulated; testnet settlements are verifiable from their NEAR transaction link.</sub></p>
+
+<table>
+  <tr>
+    <td align="center"><a href="docs/screenshots/funded-account.png"><img src="docs/screenshots/funded-account.png" width="145" alt="Trader funded account"></a><br><sub>Funded account</sub></td>
+    <td align="center"><a href="docs/screenshots/markets.png"><img src="docs/screenshots/markets.png" width="145" alt="Supported markets"></a><br><sub>Markets</sub></td>
+    <td align="center"><a href="docs/screenshots/operator-overview.png"><img src="docs/screenshots/operator-overview.png" width="145" alt="Owner business overview"></a><br><sub>Owner overview</sub></td>
+    <td align="center"><a href="docs/screenshots/operator-accounts.png"><img src="docs/screenshots/operator-accounts.png" width="145" alt="Owner account list"></a><br><sub>Accounts</sub></td>
+  </tr>
+  <tr>
+    <td align="center"><a href="docs/screenshots/payout-pool-demo.png"><img src="docs/screenshots/payout-pool-demo.png" width="145" alt="Demo payout pool"></a><br><sub>Payout pool · demo data</sub></td>
+    <td align="center"><a href="docs/screenshots/operator-rules.png"><img src="docs/screenshots/operator-rules.png" width="145" alt="Owner risk and spend controls"></a><br><sub>Policy controls</sub></td>
+    <td align="center"><a href="docs/screenshots/trader-help.png"><img src="docs/screenshots/trader-help.png" width="145" alt="Trader support and payout status"></a><br><sub>Help and status</sub></td>
+  </tr>
+</table>
+
+<p><sub>Demo balances are illustrative. Use the receipt’s NEAR testnet transaction link to verify a real settlement.</sub></p>
+
 | Capability | Berry Firm |
 | --- | --- |
 | Evaluation engine | Deterministic, server-owned prices and replayable risk rules |

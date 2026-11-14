@@ -862,7 +862,7 @@ const accf=()=>accs().filter(a=>S.af=='All'||a[2]==S.af||S.af=='Flagged'&&FLAG.i
 const aname=a=>{if(a[0]=='you')return BERRY.user.name+' (you)';const id=String(a[0]||'');return'Trader ···'+(id.length>12?id.slice(-8):id)};
 const arow=a=>`<button class="r" style="min-height:68px" onclick="acct('${a[0]}')">${AVI(a[0]=='you'?0:avId(a[0]),'s')}<span class="nm">${aname(a)}<small>$${a[1]/1000}K ${a[2]}</small></span><b class="v">${mm(a[3])}<small class="${AST[a[4]]}"><i class="sd ${AST[a[4]]}"></i>${a[4]}</small></b></button>`;
 const afilt=f=>{S.af=f;draw()};
-V.accts=()=>`${ohd('Accounts')}<div class="mu" style="margin:-8px 0 14px">${accs().length} accounts</div>
+V.accts=()=>`${ohd('Accounts')}<div class="mu" style="margin:-8px 0 14px">${accs().length} ${accs().length==1?'account':'accounts'}</div>
 <div class="pills" style="margin-top:0">${AF().map(f=>`<button class="${f==S.af?'on':''}" onclick="afilt('${f}')">${f}</button>`).join('')}</div>
 <div style="margin-top:8px">${accf().length?accf().map(arow).join(''):EMP('No accounts here','Try another filter.')}</div>`;
 const AF=()=>['All','Challenge','Funded','Flagged'];
