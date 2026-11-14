@@ -883,7 +883,7 @@ ${CATS.map(c=>`<div class="mu sm" style="margin:14px 0 0;font-weight:700">${c}</
    entry point for state-changing actions when BERRY.api is enabled. */
 const BerryAPI=(()=>{
  let online=false,loading=false;
- const fail=e=>{console.warn('Berry API',e);const message=String(e?.message||'');const copy=/ai api key|berry ai.*key/i.test(message)?'Add the AI key and restart.':/treasury.*insufficient|insufficient.*usdc/i.test(message)?'Treasury needs funding.':/near intents|payment service/i.test(message)?'Payment service unavailable.':/mainnet account/i.test(message)?'Use a NEAR mainnet account.':/paused/i.test(message)?'Payouts are paused.':/already have an active|account already active/i.test(message)?'Account already active. Resume it.':/failed to fetch|network|fetch|connection|reach/i.test(message)?'Server unavailable. Refresh.':'Couldn’t complete that. Try again.';toast(copy,'err')};
+ const fail=e=>{console.warn('Berry API',e);const message=String(e?.message||'');const copy=/ai api key|berry ai.*key/i.test(message)?'Add the AI key and restart.':/treasury.*insufficient|insufficient.*usdc/i.test(message)?'Treasury needs funding.':/near intents|payment service/i.test(message)?'Payment service unavailable.':/mainnet account/i.test(message)?'Use a NEAR mainnet account.':/paused/i.test(message)?'Payouts are paused.':/reset your current demo|funded account is required/i.test(message)?'Reset the current demo, then try again.':/already has a payout request/i.test(message)?'A payout is already open. Check Payouts.':/already have an active|account already active/i.test(message)?'Account already active. Resume it.':/failed to fetch|network|fetch|connection|reach/i.test(message)?'Server unavailable. Refresh.':'Couldn’t complete that. Try again.';toast(copy,'err')};
  const call=async(path,o={})=>{
   const r=await fetch(path,{credentials:'same-origin',headers:{'content-type':'application/json',...(o.headers||{})},...o});
   const x=await r.json().catch(()=>({}));if(!r.ok)throw new Error(x.error||'Request failed');return x
@@ -942,7 +942,7 @@ const BerryAPI=(()=>{
   appeal:message=>perform(async()=>{await call('/api/appeals',{method:'POST',body:JSON.stringify({message})});S.appeal=1;draw();toast('Appeal sent to the owner queue')}),
   updateRules:patch=>perform(async()=>{await call('/api/ops/rules',{method:'PATCH',body:JSON.stringify(patch)});await refresh();}),
   resolveCase:(id,action,reason)=>perform(async()=>{await call('/api/ops/cases/'+encodeURIComponent(id)+'/resolve',{method:'POST',body:JSON.stringify({action,reason})});await refresh({render:false});go('queue');toast('Case updated')}),
-  seed:()=>perform(async()=>{await call('/api/demo/seed',{method:'POST'});const r=await call('/api/payouts',{method:'POST',body:'{}'});await refresh({render:false});S.apiDecision=r.decision;go('payout');toast(r.payout.status==='approved'?'Berry AI approved payout':'Payout needs review',r.payout.status==='approved'?'ok':'warn')}),
+  seed:()=>perform(async()=>{const r=await call('/api/demo/run',{method:'POST'});await refresh({render:false,ops:false});S.apiDecision=r.decision||S.apiDecision;go('payout');toast(r.payout.status==='paid'?'Payout already settled':r.payout.status==='approved'?'Berry AI approved payout':r.payout.reason||'Payout needs review',r.payout.status==='approved'?'ok':r.payout.status==='paid'?'info':'warn')}),
   resetDemo:()=>perform(async()=>{await call('/api/demo/reset',{method:'POST'});await refresh({render:false});go('start');toast('Demo reset · ledger evidence kept')})
  };
  window.BerryAPI=api;return api;

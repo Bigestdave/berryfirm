@@ -191,6 +191,27 @@ export function createBerryServer({ appConfig = config, store = new BerryStore({
         if (!['mock', 'testnet'].includes(appConfig.rail) || appConfig.authMode !== 'demo') return error(response, 403, 'Demo seed is available only for a configured local or testnet demo session');
         return json(response, 200, { challenge: store.seedDemo(user.wallet) });
       }
+      if (method === 'POST' && path === '/api/demo/run') {
+        const user = requireUser(request, response); if (!user) return;
+        if (!['mock', 'testnet'].includes(appConfig.rail) || appConfig.authMode !== 'demo' || user.wallet !== appConfig.demoWallet) return error(response, 403, 'Payout demo is available only to the configured demo account.');
+        const challenge = store.seedDemo(user.wallet);
+        if (challenge.status !== 'funded') return error(response, 409, 'Reset your current demo run before starting the payout demo.');
+        const existing = store.latestPayoutForChallenge(challenge.id);
+        if (existing && ['approved', 'sending', 'paid'].includes(existing.status)) {
+          const record = store.latestCaseForPayout(existing.id);
+          return json(response, 200, { payout: existing, decision: record ? store.caseView(record).decision : null, case: record ? store.caseView(record) : null, resumed: true });
+        }
+        if (existing?.status === 'requested') {
+          const record = store.latestCaseForPayout(existing.id);
+          if (record?.status === 'open') {
+            const result = await decideCase({ store, config: appConfig, caseRecord: record });
+            return json(response, 200, { ...result, resumed: true });
+          }
+          return json(response, 200, { payout: existing, decision: record ? store.caseView(record).decision : null, case: record ? store.caseView(record) : null, resumed: true });
+        }
+        const created = store.createPayout(user.wallet, challenge.id, user.wallet);
+        return json(response, 201, await decideCase({ store, config: appConfig, caseRecord: created.case }));
+      }
       if (method === 'POST' && path === '/api/demo/reset') {
         const user = requireUser(request, response); if (!user) return;
         if (!['mock', 'testnet'].includes(appConfig.rail) || appConfig.authMode !== 'demo' || user.wallet !== appConfig.demoWallet) return error(response, 403, 'Demo reset is available only to the configured demo account.');

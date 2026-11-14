@@ -375,6 +375,12 @@ export class BerryStore {
 
   payout(payoutId) { return this.db.prepare('SELECT * FROM payouts WHERE id=?').get(payoutId) || null; }
   case(caseId) { return this.db.prepare('SELECT * FROM cases WHERE id=?').get(caseId) || null; }
+  latestPayoutForChallenge(challengeId) {
+    return this.db.prepare('SELECT * FROM payouts WHERE challenge_id=? ORDER BY created_at DESC LIMIT 1').get(challengeId) || null;
+  }
+  latestCaseForPayout(payoutId) {
+    return this.db.prepare('SELECT * FROM cases WHERE payout_id=? ORDER BY created_at DESC LIMIT 1').get(payoutId) || null;
+  }
 
   policyCheck(payout) {
     const settings = this.settings();
