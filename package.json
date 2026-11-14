@@ -1,0 +1,20 @@
+{
+  "name": "berry-firm",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Berry Firm — autonomous prop-firm infrastructure with an AI-operated treasury.",
+  "scripts": {
+    "build": "node build.mjs",
+    "start": "node server/index.mjs",
+    "dev": "node --watch server/index.mjs",
+    "test": "node --test test/**/*.test.mjs",
+    "seed:demo": "node scripts/seed-demo.mjs",
+    "wallet:testnet": "node scripts/register-outlayer-testnet.mjs",
+    "wallet:testnet:status": "node scripts/status-outlayer-testnet.mjs",
+    "wallet:testnet:prepare": "node scripts/prepare-outlayer-testnet.mjs"
+  },
+  "engines": {
+    "node": ">=24"
+  }
+}

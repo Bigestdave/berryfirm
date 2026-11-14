@@ -1,0 +1,47 @@
+/* ---------- Start ---------- */
+const FEEOF=()=>BERRY.fees[START]||0,STARTL=()=>S.challengeId?'Continue account':FEEOF()?'Start for '+mm(FEEOF()):'Start free test account',sold=()=>{const f=FEEOF();if(f){S.sales.push({s:START,f});S.pool.inp=+(S.pool.inp+f).toFixed(2)}};
+const rulesRows=()=>R('Account',m0(START)+' evaluation account')+R('Access',FEEOF()?mm(FEEOF())+' · paid once':'Free test account')+R('Profit target',m0(START*.1)+' · net of costs')+R('Daily loss limit',m0(DAILY)+' · from UTC day start')+R('Max loss','Fails below '+m0(FLOOR))+R('Trading days','3 UTC days with a trade')+R('Payout',PAYT());
+const acceptConfirm=()=>{if(serverNeeded())return;if(S.challengeId){go('home');toast('Account ready');return}if(BerryAPI.online)return BerryAPI.createChallenge(START);PRE.fresh();sold();go('home');toast('Free test account started')};
+const accept=()=>{if(S.challengeId)return go('home');if(S.cfg.halt)return toast('New challenges are paused','warn');sheet(`<div class="t2">Accept Rules v1</div><div class="mu">Your challenge follows these rules from the first trade.</div><div style="margin-top:10px">${rulesRows()}</div><button class="btn" style="margin-top:18px" onclick="acceptConfirm()">${FEEOF()?'Accept and pay '+mm(FEEOF()):'Start free test account'}</button>`)};
+const rules=()=>sheet(`<div class="t2">Berry Rules</div><div class="mu">The policy that governs your evaluation.</div><div style="margin-top:10px">${rulesRows()+R('Execution model','5 bps fee · 2 bps slippage')+R('Payouts','One per funded account')}</div>`);
+const pickSize=n=>{setSize(n);draw()};
+V.start=()=>{
+ const on=SIZES.filter(s=>S.cfg.sz[s]!==0);if(on.length&&!on.includes(START))setSize(on[0]);
+ const sel=`<div class="seg" style="margin:0 0 12px" role="group" aria-label="Account size">${on.map(s=>`<button class="${s==START?'on':''}" onclick="pickSize(${s})">$${s/1000}K</button>`).join('')}</div>
+<div class="card col hc"><span class="mu">Account size</span><div class="big" style="margin:10px 0 14px">${h(START)}</div><span class="tg">${FEEOF()?'Evaluation account':'Free test account'}</span><span class="art i-coin" role="img" aria-label="Berry Firm silver coin"></span>${SPK([[58,14,16,0],[80,6,11,1.1],[50,74,10,2.2],[91,82,14,.6]])}</div>`;
+ const rows=`<div class="tight" style="margin-top:10px">${R('Challenge fee',FEEOF()?mm(FEEOF())+' · paid once':'Free')+R('Profit target',m0(START*.1)+' · 10%')+R('Daily loss limit',m0(DAILY)+' · 5%')+R('Max loss',m0(START*.1)+' · 10%')+R('Min trading days','3')+R('Payout',PCT()+' of profit','up to '+CAPM()+' per account')}</div>
+<button class="ban" onclick="go('pool',{from:'start'})">${COINB}<span><b>Treasury-backed settlements</b><small>Every decision and payout is auditable. See the pool.</small></span><span class="ch">${I('chev',20)}</span></button>`;
+ const cta=`<div class="ctas"><button class="btn" onclick="accept()">${STARTL()}</button>${BERRY.demo?`<button class="lk" onclick="runDemo()">Run payout demo</button>`:''}</div>`;
+ return`${hdr(0,1)}<h1 style="margin:4px 0 6px">Choose your challenge</h1>${!FEEOF()&&S.rail==='testnet'?`<div class="mu sm" style="margin-bottom:12px">Free test account · no login or payment</div>`:''}${two(sel,rows+(DT()?cta:''),'e')}`};
+D.start=()=>({c:'col',h:`<button class="btn" onclick="accept()">${STARTL()}</button>${BERRY.demo?`<button class="lk" onclick="runDemo()">Run payout demo</button>`:''}`});
+/* ---------- Home ---------- */
+const pcard=(mt=18)=>{
+ if(S.stage!='funded'||S.pay=='idle'||S.pay=='paid'&&S.pdis)return'';
+ const paid=S.pay=='paid',t={review:['am','In review'],approved:['gn','Approved'],sending:['am','Sending'],paid:['gn','Paid']}[S.pay];
+ return`<div class="ban" style="margin-top:${mt}px"><button style="display:flex;gap:12px;align-items:center;flex:1;min-width:0" onclick="go('payout')">${TG(t[0],t[1])}<span><b>${paid?'Payout paid':'Payout request'}</b><small>${paid?'$'+f2(S.net)+' USDC · view receipt':mm(S.amt)+' · tap to view'}</small></span></button>${paid?`<button class="x2" aria-label="Dismiss" onclick="S.pdis=1;draw()">${I('close',18)}</button>`:`<span class="ch">${I('chev',20)}</span>`}</div>`};
+V.home=()=>{
+ const E=eq(),pr=E-START,F=S.stage=='funded',dl=dayLeft(),ml=E-FLOOR,none=!S.pos.length,fresh=!F&&none&&S.days==0,dt=DT();
+ const lim=dl<DAILY*.2?`<span class="am">${mm(dl)} left</span> ${WN}`:`${mm(dl)} left ${ck}`;
+ const top=`<div class="mu sm">${SZ()} ${F?'Funded account':'Challenge'} · ${fresh?'New':'Active'}</div>
+<div class="mu sm" style="margin-top:16px">Equity</div><div class="big" style="margin:8px 0 6px">${h(E)}</div>
+<div class="${pr<-.004?'rd':'gn'} sb">${sg(pr)} ${pr<-.004?'loss':'profit'}</div>${dt?spark(CW()-436,230):spark()}`;
+ const obj=`<div class="sec">Objectives</div>
+${F?R('Eligible profit',mm(Math.max(0,pr)))+R('Estimated payout','≈ '+mm(est()),'cap $'+f2(BERRY.cap)):`<div class="r rc"><div class="fl"><span class="k">Profit target</span><b>${mm(Math.max(0,pr))} / ${m0(START*.1)}</b></div><div class="pb"><i style="width:${Math.min(100,Math.max(0,pr)/(START*.1)*100)}%"></i></div></div>`}
+${R('Daily loss limit'+I('info',15),lim,'','why()',0,1)}${R('Max loss'+I('info',15),mm(ml)+' left '+ck,'','whyMax()',0,1)}${F?'':R('Trading days',S.days+' / 3')}`;
+ const opn=none?(fresh?'':'<div class="mu" style="padding:18px 0">No open trades.</div>'):`<div class="sec">Open trade${S.pos.length>1?'s':''}</div>${S.pos.map(posRow).join('')}`;
+ return`${hdr(1)}${dt?two(top+pcard(22)+opn,obj,'p'):top+pcard()+obj+opn}`};
+/* the pinned button only shows when there is a next step */
+D.home=()=>{
+ const n=S.pos.length,F=S.stage=='funded';
+ if(n)return{h:`<button class="btn" onclick="${n>1?"go('markets')":'manage(0)'}">Manage trade${n>1?'s':''}</button>`};
+ if(F)return S.pay=='idle'&&est()>0?{h:`<button class="btn" onclick="reqSheet()">Request payout</button>`}:null;
+ return S.days==0?{h:`<button class="btn" onclick="go('markets')">Place your first trade</button>`}:null};
+const sd=(d,m)=>(d<0?'−':'+')+dd(d,m);
+const why=()=>{
+ const u=Math.max(0,-(S.rl+flt())),p=S.pos[0];
+ if(u<.005)return sheet(`<div class="t2">Daily loss limit</div><div class="mu">You haven't lost anything today, so the full ${mm(DAILY)} is available.</div><div style="margin-top:10px">${R('Limit',m0(DAILY)+' · 5% of '+m0(START))+R('Resets','00:00 UTC')}</div>`);
+ if(!p)return sheet(`<div class="t2">Daily loss limit</div><div class="mu">Your closed trades lost ${mm(u)} today.</div><div style="margin-top:10px">${R('Left today',mm(dayLeft()))+R('Resets','00:00 UTC')}</div>`);
+ if(S.pos.length>1)return sheet(`${AIL}<div class="t2">Why is your daily loss ${mm(u)}?</div><div class="mu">Your open trades are ${flt()<0?'down':'up'} ${mm(Math.abs(flt()))} together.</div><div style="margin-top:10px">${S.pos.map(q=>R(MP(q).s+' · '+q.side,`<span class="${pl(q)<0?'rd':'gn'}">${sg(pl(q))}</span>`)).join('')+R('If your stop losses are hit',mm(left2())+' left today')}</div>${chips(['Rules v1','12:04 UTC'])}<div class="two"><button class="btn g" onclick="go('help')">Ask a question</button><button class="btn" onclick="shut();go('markets')">Manage trades</button></div>`);
+ const m=MP(p);
+ sheet(`${AIL}<div class="t2">Why is your daily loss ${mm(u)}?</div><div class="mu">${m.s.split('/')[0]} moved ${dd(m.p-p.e,m)} against you since you ${p.side=='Buy'?'bought':'sold'}.</div><div style="margin-top:10px">${R(`${sd((m.p-p.e)*dir(p),m)} × ${zf(p.z,m)}`,`<span class="rd">${sg(pl(p))}</span>`)+R('If your stop loss is hit',mm(left2())+' left today')}</div>${chips(['Trade #6','Rules v1','12:04 UTC'])}<div class="two"><button class="btn g" onclick="go('help')">Ask a question</button><button class="btn" onclick="shut();manage(0)">Manage trade</button></div>`)};
+const whyMax=()=>sheet(`<div class="t2">Max loss</div><div class="mu">Your account fails if equity drops below ${m0(FLOOR)}. Recovering afterwards does not undo it.</div><div style="margin-top:10px">${R('Equity',mm(eq()))+R('Fails below',m0(FLOOR))+R('Left',mm(eq()-FLOOR))}</div>`);

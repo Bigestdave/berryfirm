@@ -1,0 +1,2 @@
+Logos in this folder were fetched by scripts/fetch-logos.mjs from the cryptocurrency-icons pack (CC0) or from files you supplied.
+The marks belong to their projects. Use them to name the asset, not to imply endorsement.
