@@ -1,5 +1,7 @@
 # Berry Firm
 
+**Live judge demo:** [berry-firm.onrender.com](https://berry-firm.onrender.com) · Free test account, no payment required. Open **Profile → Run payout demo** to start the guided payout flow.
+
 ## The autonomous prop firm
 
 Berry Firm turns the prop-firm operating model into autonomous capital infrastructure. A trader enters an evaluation, trades within clear risk rules, qualifies for funded capital, and requests a settlement. Berry AI evaluates the case; a policy gate enforces the owner's limits; the treasury executes only approved settlements; and the public ledger shows the operating record.
@@ -57,7 +59,7 @@ The repository includes a Render Blueprint in `render.yaml`. It creates one Node
 1. In Render, choose **New → Blueprint**, connect `Bigestdave/berryfirm`, select the `main` branch, and use the repository's `render.yaml`.
 2. When prompted, enter `AI_API_KEY` and `OUTLAYER_WALLET_KEY` from your local `.env` directly into Render's secret fields. Never add either key to GitHub or paste it into chat.
 3. Review the paid web-service and persistent-disk charges in Render before creating the resources. A free web service has an ephemeral filesystem, so its SQLite ledger would be lost on restart or spin-down.
-4. When the service is live, use its `onrender.com` URL. **Profile → Run payout demo** seeds a qualifying test case; the testnet treasury is shared with the local demo and is not replenished by **Reset run**.
+4. The live judge demo is [berry-firm.onrender.com](https://berry-firm.onrender.com). **Profile → Run payout demo** seeds a qualifying test case; the testnet treasury is shared with the local demo and is not replenished by **Reset run**.
 
 NEAR Intents challenge checkout remains disabled in this demo. Evaluation access is free, trading uses the controlled simulation, and settlements use test USDC on NEAR testnet.
 

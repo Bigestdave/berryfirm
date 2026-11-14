@@ -23,6 +23,7 @@ const body = parts.map((f) => readFileSync(join(root, 'src', f), 'utf8')).join('
 const head =
   '<!doctype html><html lang="en"><head><meta charset="utf-8">' +
   '<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">' +
+  '<link rel="icon" href="/favicon.svg" type="image/svg+xml">' +
   '<script src="config.js"></script></head><body style="margin:0">\n';
 mkdirSync(join(root, 'public'), { recursive: true });
 writeFileSync(join(root, 'public', 'index.html'), head + body + '</body></html>\n');
