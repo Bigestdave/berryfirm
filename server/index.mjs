@@ -194,8 +194,12 @@ export function createBerryServer({ appConfig = config, store = new BerryStore({
       if (method === 'POST' && path === '/api/demo/run') {
         const user = requireUser(request, response); if (!user) return;
         if (!['mock', 'testnet'].includes(appConfig.rail) || appConfig.authMode !== 'demo' || user.wallet !== appConfig.demoWallet) return error(response, 403, 'Payout demo is available only to the configured demo account.');
-        const challenge = store.seedDemo(user.wallet);
-        if (challenge.status !== 'funded') return error(response, 409, 'Reset your current demo run before starting the payout demo.');
+        let challenge = store.seedDemo(user.wallet);
+        if (challenge.status !== 'funded') {
+          store.resetDemo(user.wallet);
+          challenge = store.seedDemo(user.wallet);
+        }
+        if (challenge.status !== 'funded') return error(response, 409, 'The payout demo could not prepare a funded account.');
         const existing = store.latestPayoutForChallenge(challenge.id);
         if (existing && ['approved', 'sending', 'paid'].includes(existing.status)) {
           const record = store.latestCaseForPayout(existing.id);
